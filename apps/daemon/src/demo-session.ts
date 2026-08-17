@@ -15,20 +15,6 @@ export const DEMO_TASK_ID = "demo-task-1";
 export const DEMO_MESSAGE =
   "Inspect the committed daily-factor fixture through the offline Raw Pi host.";
 
-const ALLOWED_DEMO_EVENT_TYPES = new Set([
-  "session.created",
-  "session.ready",
-  "session.status_changed",
-  "message.user_appended",
-  "message.assistant_delta",
-  "message.assistant_completed",
-  "tool.started",
-  "tool.completed",
-  "view.published",
-  "task.started",
-  "task.completed",
-]);
-
 /** Creates the demo through the real Pi host once, then validates and replays its durable output. */
 export async function seedDemoSession(
   eventStores: SessionEventStoreRegistry,
@@ -66,13 +52,36 @@ function assertDemoReplay(events: readonly LoomEventEnvelope[]): void {
   const first = events[0];
   const last = events.at(-1);
   const completedMessages = events
-    .filter((event) => event.type === "message.assistant_completed")
+    .filter(
+      (event) =>
+        event.type === "message.assistant_completed" && event.payload.taskId === DEMO_TASK_ID,
+    )
     .map((event) => event.payload.content);
-  const userMessages = events.filter((event) => event.type === "message.user_appended");
-  const toolStarts = events.filter((event) => event.type === "tool.started");
-  const toolEnds = events.filter((event) => event.type === "tool.completed");
-  const completedTasks = events.filter((event) => event.type === "task.completed");
-  const views = events.filter((event) => event.type === "view.published");
+  const userMessages = events.filter(
+    (event) => event.type === "message.user_appended" && event.payload.messageId === "demo-user-1",
+  );
+  const taskStarts = events.filter(
+    (event) => event.type === "task.started" && event.payload.taskId === DEMO_TASK_ID,
+  );
+  const taskTerminals = events.filter(
+    (event) =>
+      (event.type === "task.completed" ||
+        event.type === "task.failed" ||
+        event.type === "task.cancelled" ||
+        event.type === "task.interrupted") &&
+      event.payload.taskId === DEMO_TASK_ID,
+  );
+  const toolStarts = events.filter(
+    (event) => event.type === "tool.started" && event.payload.taskId === DEMO_TASK_ID,
+  );
+  const toolEnds = events.filter(
+    (event) =>
+      (event.type === "tool.completed" || event.type === "tool.failed") &&
+      event.payload.taskId === DEMO_TASK_ID,
+  );
+  const views = events.filter(
+    (event) => event.type === "view.published" && event.payload.taskId === DEMO_TASK_ID,
+  );
   const ready = events.find((event) => event.type === "session.ready");
 
   if (
@@ -80,9 +89,9 @@ function assertDemoReplay(events: readonly LoomEventEnvelope[]): void {
     first.payload.profile !== "raw-pi" ||
     last?.type !== "session.status_changed" ||
     last.payload.status !== "ready" ||
-    events.some((event) => !ALLOWED_DEMO_EVENT_TYPES.has(event.type)) ||
     userMessages.length !== 1 ||
     userMessages[0]?.payload.content !== DEMO_MESSAGE ||
+    taskStarts.length !== 1 ||
     completedMessages.length !== 2 ||
     completedMessages[0] !== LOOM_FIXTURE_PREAMBLE ||
     completedMessages[1] !== LOOM_FIXTURE_FINAL ||
@@ -90,8 +99,8 @@ function assertDemoReplay(events: readonly LoomEventEnvelope[]): void {
     toolStarts[0]?.payload.toolName !== LOOM_REFERENCE_BACKTEST_TOOL_NAME ||
     toolEnds.length !== 1 ||
     toolEnds[0]?.payload.toolCallId !== toolStarts[0]?.payload.toolCallId ||
-    completedTasks.length !== 1 ||
-    completedTasks[0]?.payload.taskId !== DEMO_TASK_ID ||
+    taskTerminals.length !== 1 ||
+    taskTerminals[0]?.type !== "task.completed" ||
     views.length !== 1 ||
     !isLoomPublishedViewDescriptor(views[0]?.payload) ||
     views[0].payload.taskId !== DEMO_TASK_ID ||

@@ -41,7 +41,7 @@ describe("Raw Pi command API", () => {
     await rm(stateRoot, { recursive: true, force: true });
   });
 
-  it("creates a Raw Pi session, accepts a message, and exposes completion through replay", async () => {
+  it("creates a Raw Pi session and continues a selection-aware task after restart", async () => {
     const created = await command("/v0/projects/project-a/sessions", {
       format: "loom.session.create.v0",
       profile: "raw-pi",
@@ -125,6 +125,16 @@ describe("Raw Pi command API", () => {
     const selectionCommand = requireAccepted(selectionResponse.body);
     expect(selectionCommand.selectionId).toMatch(/^selection_/);
 
+    eventStores = new SessionEventStoreRegistry({ stateRoot });
+    runtimeHost = host();
+    await expect(runtimeHost.reconcileDurableSessions()).resolves.toMatchObject({
+      discovered: 1,
+      recovered: 1,
+      failed: 0,
+    });
+    app = createLoomApp({ eventStores, runtimeHost });
+    headers = await authorizedHeaders(app);
+
     const asked = await command(
       `/v0/sessions/${createCommand.sessionId}/messages?projectId=project-a`,
       {
@@ -154,6 +164,12 @@ describe("Raw Pi command API", () => {
       }),
     );
     expect(finalEvents.filter((event) => event.type === "view.published")).toHaveLength(1);
+    expect(finalEvents).toContainEqual(
+      expect.objectContaining({
+        type: "session.status_changed",
+        payload: { status: "ready", recovery: "resumed" },
+      }),
+    );
 
     const wrongSession = await app.request(
       `/v0/views/${viewBody.viewId}?projectId=project-a&sessionId=another-session`,

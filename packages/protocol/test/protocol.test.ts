@@ -63,6 +63,13 @@ describe("Loom event protocol", () => {
   it("accepts an exact, JSON-safe event envelope", () => {
     expect(Check(LoomEventEnvelopeSchema, event)).toBe(true);
     expect(isLoomEventEnvelope(event)).toBe(true);
+    expect(
+      isLoomEventEnvelope({
+        ...event,
+        type: "task.interrupted",
+        payload: { taskId: "task-1", code: "DAEMON_RESTART" },
+      }),
+    ).toBe(true);
   });
 
   it("rejects non-canonical time, non-finite payloads, and unknown fields", () => {

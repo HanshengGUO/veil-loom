@@ -65,6 +65,28 @@ describe("durable session event store", () => {
     expect(replay.map((event) => event.sequence)).toEqual([1, 2]);
   });
 
+  it("discovers only portable sessions with regular durable logs", async () => {
+    await (await registry().get("project-b", "session-2")).append({
+      type: "session.created",
+      payload: { profile: "raw-pi" },
+    });
+    await (await registry().get("project-a", "session-1")).append({
+      type: "session.created",
+      payload: { profile: "raw-pi" },
+    });
+    await mkdir(join(stateRoot, "projects", "invalid project", "sessions", "ignored"), {
+      recursive: true,
+    });
+    await mkdir(join(stateRoot, "projects", "project-a", "sessions", "empty-session"), {
+      recursive: true,
+    });
+
+    await expect(registry().discover()).resolves.toEqual([
+      { projectId: "project-a", sessionId: "session-1" },
+      { projectId: "project-b", sessionId: "session-2" },
+    ]);
+  });
+
   it("rejects a partial trailing record instead of silently discarding it", async () => {
     await mkdir(join(stateRoot, "projects/project-a/sessions/session-a"), { recursive: true });
     await writeFile(eventLogPath(stateRoot), '{"format":"loom.event.v0"', "utf8");

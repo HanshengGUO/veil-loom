@@ -820,6 +820,7 @@ export const LoomEventTypeSchema = Type.Union(
     Type.Literal("task.cancelled"),
     Type.Literal("task.completed"),
     Type.Literal("task.failed"),
+    Type.Literal("task.interrupted"),
     Type.Literal("view.published"),
     Type.Literal("view.superseded"),
     Type.Literal("selection.created"),

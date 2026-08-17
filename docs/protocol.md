@@ -74,6 +74,26 @@ closes the connection and explicitly requests replay after 10.
 Chart series are referenced as immutable blobs rather than repeated in an unbounded event log. A
 `view.published` event carries an exact `loom.view-published.v0` descriptor, not series values.
 
+### Restart reconciliation
+
+The event log, rather than Pi's private conversation file, decides whether a task completed. During
+daemon startup an open durable session follows this ordered recovery record:
+
+1. `session.status_changed` with `status: "recovering"`;
+2. one `task.interrupted` for each task that has no durable terminal event;
+3. `session.status_changed` with `status: "ready"` and `recovery: "resumed"` or
+   `"reconstructed"`, but only after the runtime is usable again.
+
+`task.interrupted` is terminal. Its stable `DAEMON_RESTART` code means that no successful terminal
+record exists and the request must be retried. A session that crashed before its first
+`session.ready` instead ends with `SESSION_START_INTERRUPTED` and is not made executable. Runtime
+restore failures end with `PI_RECOVERY_FAILED`; public records contain a remedy but no provider
+diagnostics or local path.
+
+The `reconstructed` compatibility mode uses only a bounded recent transcript of public user events
+and completed assistant messages. It does not replay partial deltas, tools, views, selections, or
+hidden model context. Neither recovery mode may synthesize `task.completed`.
+
 ## Chart selections
 
 The browser creates selection context with:

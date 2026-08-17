@@ -8,9 +8,9 @@ honest. Raw Pi sessions can chat, code, run local tools, and publish interactive
 Veil sessions add guarded data, promotion contracts, statistical gates, Experiment memory, and
 reproduction.
 
-> Status: pre-alpha with durable replay, a real Pi host, synchronized backtest charts, and bounded
-> chart selections that can be sent back to Pi. The model path remains fully offline, and nothing
-> is published to npm.
+> Status: pre-alpha with restart-resilient Raw Pi sessions, synchronized backtest charts, and
+> bounded chart selections that can be sent back to Pi. The model path remains fully offline, and
+> nothing is published to npm.
 
 ## Session profiles
 
@@ -80,6 +80,10 @@ equity, drawdown, metrics, and provenance. Both charts share one crosshair, time
 and selection. Drag a range or choose the maximum-drawdown window, create a bounded selection
 context, then ask Pi about it. The browser sends only the view ID, time range, and visible series
 keys; the daemon validates ownership and recomputes the summary from canonical resources.
+
+Restarting the daemon preserves completed work and restores usable Raw Pi sessions before it begins
+serving commands. A task that was still running is recorded as interrupted and must be retried; Loom
+never turns an incomplete task into a successful result during recovery.
 
 This is a deterministic import fixture, not a general backtest engine, and it does not contact a
 model service. Every result remains **EXPLORATORY · UNVERIFIED**.

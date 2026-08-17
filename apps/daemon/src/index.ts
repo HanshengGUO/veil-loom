@@ -27,6 +27,7 @@ const security = new DaemonSecurity({
 });
 const demoSessionEnabled = process.env.LOOM_DEMO_SESSION === "1";
 
+await runtimeHost.reconcileDurableSessions();
 if (demoSessionEnabled) await seedDemoSession(eventStores, runtimeHost);
 
 serve(

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -40,6 +42,7 @@ export interface PiPromptFixture {
 export interface HostedPiSession {
   readonly descriptor: LoomPiRuntimeDescriptor;
   readonly session: AgentSession;
+  readonly recovery: "fresh" | "resumed" | "reconstructed";
   preparePrompt(input: PiPromptFixture): void;
   dispose(): void;
 }
@@ -49,6 +52,10 @@ export interface PiSessionFactoryInput {
   sessionId: string;
   cwd: string;
   agentDir: string;
+  recovery?: {
+    publicContext?: string;
+    interruptedTaskIds: readonly string[];
+  };
 }
 
 export interface PiSessionFactory {
@@ -136,6 +143,7 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       throw new Error("The Loom extension could not be loaded");
     }
 
+    const sessionState = await resolvePiSessionManager(input);
     const { session } = await createAgentSession({
       cwd: input.cwd,
       agentDir: input.agentDir,
@@ -144,7 +152,7 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       thinkingLevel: "off",
       tools: [LOOM_REFERENCE_BACKTEST_TOOL_NAME],
       resourceLoader,
-      sessionManager: SessionManager.inMemory(input.cwd),
+      sessionManager: sessionState.manager,
       settingsManager,
     });
     await session.bindExtensions({ mode: "print" });
@@ -162,6 +170,7 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
     return {
       descriptor,
       session,
+      recovery: sessionState.recovery,
       preparePrompt: (fixture) => {
         taskId = fixture.taskId;
         if (this.#options.outcome === "error") {
@@ -198,4 +207,88 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       dispose: () => session.dispose(),
     };
   }
+}
+
+const LOOM_PI_SESSION_MARKER = "veil-loom.runtime.v0";
+const LOOM_PI_RECOVERY_CONTEXT = "veil-loom.recovery.v0";
+
+async function resolvePiSessionManager(input: PiSessionFactoryInput): Promise<{
+  manager: SessionManager;
+  recovery: HostedPiSession["recovery"];
+}> {
+  const sessionDir = join(input.agentDir, "sessions");
+  const id = piSessionId(input.projectId, input.sessionId);
+  const matches = (await SessionManager.list(input.cwd, sessionDir)).filter(
+    (candidate) => candidate.id === id,
+  );
+  if (matches.length > 1) throw new Error("The Loom Pi session identity is ambiguous");
+  if (input.recovery === undefined) {
+    if (matches.length > 0) throw new Error("The Loom Pi session already exists");
+    const manager = SessionManager.create(input.cwd, sessionDir, { id });
+    appendSessionMarker(manager, input);
+    return { manager, recovery: "fresh" };
+  }
+
+  let manager: SessionManager;
+  let recovery: HostedPiSession["recovery"];
+  const match = matches[0];
+  if (match === undefined) {
+    manager = SessionManager.create(input.cwd, sessionDir, { id });
+    appendSessionMarker(manager, input);
+    recovery = "reconstructed";
+    if (input.recovery.publicContext !== undefined) {
+      manager.appendCustomMessageEntry(
+        LOOM_PI_RECOVERY_CONTEXT,
+        input.recovery.publicContext,
+        false,
+        { format: "loom.pi-recovery-context.v0", source: "public-events" },
+      );
+    }
+  } else {
+    manager = SessionManager.open(match.path, sessionDir, input.cwd);
+    assertSessionMarker(manager, input);
+    recovery = "resumed";
+  }
+  if (input.recovery.interruptedTaskIds.length > 0) {
+    manager.appendCustomMessageEntry(
+      LOOM_PI_RECOVERY_CONTEXT,
+      "The previous Loom task was interrupted by a daemon restart. It has no successful terminal record; do not describe it as completed.",
+      false,
+      {
+        format: "loom.pi-interruption-context.v0",
+        taskIds: [...input.recovery.interruptedTaskIds],
+      },
+    );
+  }
+  return { manager, recovery };
+}
+
+function appendSessionMarker(manager: SessionManager, input: PiSessionFactoryInput): void {
+  manager.appendCustomEntry(LOOM_PI_SESSION_MARKER, {
+    format: LOOM_PI_SESSION_MARKER,
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+  });
+}
+
+function assertSessionMarker(manager: SessionManager, input: PiSessionFactoryInput): void {
+  const matches = manager.getEntries().filter((entry) => {
+    if (entry.type !== "custom" || entry.customType !== LOOM_PI_SESSION_MARKER) return false;
+    const data = entry.data;
+    return (
+      data !== null &&
+      typeof data === "object" &&
+      "format" in data &&
+      data.format === LOOM_PI_SESSION_MARKER &&
+      "projectId" in data &&
+      data.projectId === input.projectId &&
+      "sessionId" in data &&
+      data.sessionId === input.sessionId
+    );
+  });
+  if (matches.length !== 1) throw new Error("The Loom Pi session marker is invalid");
+}
+
+function piSessionId(projectId: string, sessionId: string): string {
+  return `loom-${createHash("sha256").update(projectId).update("\0").update(sessionId).digest("hex").slice(0, 32)}`;
 }

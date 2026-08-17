@@ -29,3 +29,8 @@ are tracked independently from package versions.
 - One synchronized chart viewport with crosshair, selection, zoom, pan, and origin de-duplication.
 - Ownership-bound chart selections with daemon-derived summaries and a bounded Raw Pi context
   round trip.
+- Startup discovery and fail-closed reconciliation for durable Raw Pi sessions.
+- Persisted Pi conversation continuity with ownership markers, exact runtime matching, and bounded
+  public-transcript reconstruction for legacy sessions.
+- Explicit `task.interrupted` terminals for work that lacked a durable result when the daemon
+  stopped.

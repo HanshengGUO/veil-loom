@@ -75,7 +75,13 @@ describe("deterministic Pi demo session", () => {
     const firstRegistry = registry();
     await seedDemoSession(firstRegistry, host(firstRegistry));
     const reopenedRegistry = registry();
-    const reopened = await seedDemoSession(reopenedRegistry, host(reopenedRegistry));
+    const reopenedHost = host(reopenedRegistry);
+    await expect(reopenedHost.reconcileDurableSessions()).resolves.toMatchObject({
+      discovered: 1,
+      recovered: 1,
+      failed: 0,
+    });
+    const reopened = await seedDemoSession(reopenedRegistry, reopenedHost);
 
     const events = await reopened.replay();
     expect(events.at(-1)).toMatchObject({

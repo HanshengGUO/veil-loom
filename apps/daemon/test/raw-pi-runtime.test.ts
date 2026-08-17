@@ -211,7 +211,7 @@ describe("Raw Pi runtime adapter", () => {
         },
       },
     });
-    const host = new LoomRuntimeHost({ adapters: [adapter] });
+    const host = new LoomRuntimeHost({ adapters: [adapter], eventStores });
 
     await expect(
       host.createSession(

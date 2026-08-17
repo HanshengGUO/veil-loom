@@ -52,6 +52,13 @@ text and coarse lifecycle facts, but drops thinking blocks, tool arguments, tool
 provider error messages. The committed CI/development provider is Pi's in-memory faux provider with
 network refresh disabled; its sole Loom reference tool has no filesystem, shell, or network access.
 
+Pi conversation files are private daemon state, not a second public source of truth. On restart the
+daemon requires the stored Loom ownership marker and exact public runtime fingerprint before using
+one. A Pi transcript can restore conversational context, but only the append-only Loom log can
+declare task completion. Any Loom task without a durable terminal event becomes `task.interrupted`.
+For legacy sessions without a Pi file, reconstruction is limited to recent public user messages and
+completed assistant text; tool data, deltas, diagnostics, and raw series are excluded.
+
 The reference tool does not treat arbitrary model or tool JSON as chart data. It invokes one
 explicit adapter, which validates the complete import and size limits before any resource is made
 visible. Only the resulting view descriptor enters the session log. Series live in immutable

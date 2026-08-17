@@ -13,6 +13,7 @@ import {
   LOOM_REFERENCE_BACKTEST_TOOL_NAME,
   publishedViewFromToolResult,
 } from "./pi/loom-extension.js";
+import type { SessionRecoveryPlan } from "./session-recovery.js";
 
 export type RuntimeAdapterErrorCode =
   | "PROFILE_UNAVAILABLE"
@@ -72,6 +73,7 @@ export interface CloseSessionInput {
 export interface LoomRuntimeAdapter {
   readonly descriptor: LoomProfileDescriptor;
   start(input: StartSessionInput): Promise<RuntimeSession>;
+  recover(input: SessionRecoveryPlan): Promise<RuntimeSession | undefined>;
   send(input: SendMessageInput): Promise<LoomAcceptedCommandResponse>;
   cancel(input: CancelTaskInput): Promise<LoomAcceptedCommandResponse>;
   close(input: CloseSessionInput): Promise<void>;
@@ -208,6 +210,113 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
         pi,
         activeTask: undefined,
         knownTasks: new Set(),
+      };
+      this.#sessions.set(key, state);
+      return publicSession(state);
+    } finally {
+      this.#starting.delete(key);
+    }
+  }
+
+  async recover(input: SessionRecoveryPlan): Promise<RuntimeSession | undefined> {
+    if (input.profile !== "raw-pi") {
+      throw new RuntimeAdapterError(
+        "PROFILE_UNAVAILABLE",
+        "The durable session does not belong to the Raw Pi adapter",
+      );
+    }
+    if (input.disposition === "closed" || input.disposition === "failed") return undefined;
+
+    const key = runtimeKey(input.projectId, input.sessionId);
+    if (this.#sessions.has(key) || this.#starting.has(key)) {
+      throw new RuntimeAdapterError("SESSION_CONFLICT", "The session is already active");
+    }
+    this.#starting.add(key);
+
+    try {
+      const store = await this.#eventStores.get(input.projectId, input.sessionId);
+      await store.append({
+        type: "session.status_changed",
+        payload: { status: "recovering", reason: "daemon_restart" },
+      });
+      for (const taskId of input.interruptedTaskIds) {
+        await store.append({
+          type: "task.interrupted",
+          payload: {
+            taskId,
+            code: "DAEMON_RESTART",
+            remedy: "Retry the request; the previous task has no successful terminal record.",
+          },
+        });
+      }
+
+      if (input.disposition === "incomplete" || input.runtime === undefined) {
+        await store.append({
+          type: "session.status_changed",
+          payload: {
+            status: "failed",
+            code: "SESSION_START_INTERRUPTED",
+            remedy: "Create a new session; the previous runtime did not become ready.",
+          },
+        });
+        return undefined;
+      }
+
+      let pi: HostedPiSession;
+      try {
+        pi = await this.#sessionFactory.create({
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          cwd: this.#cwd,
+          agentDir: this.#agentDir,
+          recovery: {
+            ...(input.publicContext === undefined ? {} : { publicContext: input.publicContext }),
+            interruptedTaskIds: input.interruptedTaskIds,
+          },
+        });
+        if (
+          !isLoomPiRuntimeDescriptor(pi.descriptor) ||
+          !sameRuntimeDescriptor(input.runtime, pi.descriptor)
+        ) {
+          pi.dispose();
+          throw new Error("The recovered Pi runtime descriptor does not match the durable record");
+        }
+      } catch (error) {
+        await store.append({
+          type: "session.status_changed",
+          payload: {
+            status: "failed",
+            code: "PI_RECOVERY_FAILED",
+            remedy:
+              "Inspect the daemon's private diagnostics, repair the local runtime, and retry recovery.",
+          },
+        });
+        throw new RuntimeAdapterError(
+          "RUNTIME_UNAVAILABLE",
+          "The durable Pi runtime could not be recovered",
+          { cause: error },
+        );
+      }
+
+      try {
+        await store.append({
+          type: "session.status_changed",
+          payload: { status: "ready", recovery: pi.recovery },
+        });
+      } catch (error) {
+        pi.dispose();
+        throw error;
+      }
+
+      const state: RuntimeState = {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        profile: "raw-pi",
+        runtime: pi.descriptor,
+        store,
+        pi,
+        activeTask: undefined,
+        knownTasks: new Set(input.knownTaskIds),
       };
       this.#sessions.set(key, state);
       return publicSession(state);
@@ -542,6 +651,21 @@ function publicSession(state: RuntimeState): RuntimeSession {
 
 function runtimeKey(projectId: string, sessionId: string): string {
   return `${projectId}\0${sessionId}`;
+}
+
+function sameRuntimeDescriptor(
+  expected: LoomPiRuntimeDescriptor,
+  actual: LoomPiRuntimeDescriptor,
+): boolean {
+  return (
+    expected.format === actual.format &&
+    expected.package === actual.package &&
+    expected.version === actual.version &&
+    expected.provider === actual.provider &&
+    expected.model === actual.model &&
+    expected.mode === actual.mode &&
+    expected.fingerprint === actual.fingerprint
+  );
 }
 
 function isAssistantMessage(

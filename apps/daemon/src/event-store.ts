@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   isLoomEventEnvelope,
@@ -181,6 +181,11 @@ export interface SessionEventStoreRegistryOptions {
   eventId?: () => string;
 }
 
+export interface DurableSessionIdentity {
+  projectId: string;
+  sessionId: string;
+}
+
 export class SessionEventStoreRegistry {
   readonly stateRoot: string;
   readonly #options: SessionEventStoreRegistryOptions;
@@ -208,6 +213,51 @@ export class SessionEventStoreRegistry {
     this.#stores.set(key, store);
     store.catch(() => this.#stores.delete(key));
     return store;
+  }
+
+  async discover(): Promise<readonly DurableSessionIdentity[]> {
+    const projectsRoot = join(this.stateRoot, "projects");
+    const projects = await readDirectory(projectsRoot);
+    const identities: DurableSessionIdentity[] = [];
+    for (const project of projects) {
+      if (!project.isDirectory() || !isLoomPortableId(project.name)) continue;
+      const sessionsRoot = join(projectsRoot, project.name, "sessions");
+      const sessions = await readDirectory(sessionsRoot);
+      for (const session of sessions) {
+        if (!session.isDirectory() || !isLoomPortableId(session.name)) continue;
+        const logPath = eventLogPath(this.stateRoot, project.name, session.name);
+        try {
+          const metadata = await lstat(logPath);
+          if (!metadata.isFile() || metadata.isSymbolicLink()) continue;
+        } catch (error) {
+          if (isNodeError(error) && error.code === "ENOENT") continue;
+          throw new SessionEventStoreError(
+            "EVENT_LOG_CORRUPT",
+            "A durable session could not be inspected",
+            { cause: error },
+          );
+        }
+        identities.push({ projectId: project.name, sessionId: session.name });
+      }
+    }
+    return identities.sort((left, right) =>
+      left.projectId === right.projectId
+        ? left.sessionId.localeCompare(right.sessionId)
+        : left.projectId.localeCompare(right.projectId),
+    );
+  }
+}
+
+async function readDirectory(path: string) {
+  try {
+    return await readdir(path, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw new SessionEventStoreError(
+      "EVENT_LOG_CORRUPT",
+      "The durable session directory could not be inspected",
+      { cause: error },
+    );
   }
 }
 

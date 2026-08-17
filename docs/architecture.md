@@ -96,6 +96,26 @@ new record to disk before making it visible to an SSE subscriber. On restart it 
 log and rebuilds the in-memory tail; partial or reordered records fail closed instead of being
 silently dropped.
 
+Before accepting commands, the daemon discovers every portable project/session log and reconciles
+its last durable state. The Loom event log is authoritative for public lifecycle and task outcome.
+If a task has `task.started` but no durable terminal event, recovery first appends
+`session.status_changed: recovering`, then `task.interrupted`, and only then attempts to reopen the
+runtime. It never infers completion from model history, files, or a provider response. Sessions that
+never reached `session.ready`, have a corrupt topology, or cannot restore the recorded runtime stay
+unavailable with a durable failed state.
+
+Pi keeps a separate private session file for conversation continuity. Loom binds it to a hashed
+project/session identity with an ownership marker and reopens it only when the package, provider,
+model, mode, and fingerprint still match the public runtime descriptor. The recovered runtime is
+registered only after a new durable ready status. This second file can restore model context, but it
+cannot create, amend, or upgrade a Loom task result.
+
+Sessions created before Pi persistence existed have a narrow compatibility path: Loom creates a new
+Pi session from at most 32 recent public user messages and assistant completions, bounded to 32 KiB,
+and labels the recovery as `reconstructed`. Deltas, thinking, tool arguments, tool results, raw
+series, and private diagnostics are not copied. The context explicitly warns that omitted or
+interrupted work did not succeed.
+
 The browser reconnects with the last sequence it applied. Subscription and replay are registered as
 one serialized operation, so an event cannot fall between the replay snapshot and the live stream.
 

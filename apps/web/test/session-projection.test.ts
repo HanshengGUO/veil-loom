@@ -176,6 +176,25 @@ describe("session projection reducer", () => {
       state: { lastSequence: 1, activeSelection: undefined, issue: { kind: "protocol" } },
     });
   });
+
+  it("restores an interrupted task as terminal after daemon recovery", () => {
+    let state = createSessionProjection("project-a", "session-a");
+    for (const fixtureEvent of [
+      event(1, "session.created", { profile: "raw-pi" }),
+      event(2, "task.started", { taskId: "task-1", label: "Interrupted research" }),
+      event(3, "session.status_changed", { status: "recovering" }),
+      event(4, "task.interrupted", { taskId: "task-1", code: "DAEMON_RESTART" }),
+      event(5, "session.status_changed", { status: "ready", recovery: "resumed" }),
+    ]) {
+      const result = applySessionEvent(state, fixtureEvent);
+      expect(result.outcome).toBe("applied");
+      state = result.state;
+    }
+    expect(state).toMatchObject({
+      status: "ready",
+      tasks: [{ id: "task-1", label: "Interrupted research", status: "interrupted" }],
+    });
+  });
 });
 
 function selectionPayload() {

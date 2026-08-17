@@ -20,7 +20,7 @@ export interface ConversationEntry {
 export interface TaskProjection {
   id: string;
   label: string;
-  status: "running" | "cancel-requested" | "cancelled" | "completed" | "failed";
+  status: "running" | "cancel-requested" | "cancelled" | "completed" | "failed" | "interrupted";
   sequence: number;
 }
 
@@ -219,6 +219,9 @@ export function applySessionEvent(
       break;
     case "task.failed":
       next = updateTask(next, event, "failed");
+      break;
+    case "task.interrupted":
+      next = updateTask(next, event, "interrupted");
       break;
     case "view.published": {
       if (!isLoomPublishedViewDescriptor(event.payload)) {

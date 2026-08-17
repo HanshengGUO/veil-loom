@@ -18,6 +18,7 @@ import {
   RuntimeAdapterError,
 } from "./runtime-adapter.js";
 import { SelectionService } from "./selection-service.js";
+import { projectSessionRecovery } from "./session-recovery.js";
 
 type RuntimeIdKind = "session" | "command" | "task" | "message";
 
@@ -25,6 +26,7 @@ export type RuntimeIdSource = (kind: RuntimeIdKind) => string;
 
 export interface RuntimeHostOptions {
   adapters: readonly LoomRuntimeAdapter[];
+  eventStores: SessionEventStoreRegistry;
   selections?: SelectionService;
   idSource?: RuntimeIdSource;
 }
@@ -59,10 +61,19 @@ export interface MessageRuntimeIdentity {
   messageId: string;
 }
 
+export interface RuntimeReconciliationReport {
+  discovered: number;
+  recovered: number;
+  skipped: number;
+  failed: number;
+  interruptedTasks: number;
+}
+
 /** Routes profile-neutral commands to one adapter while keeping generated IDs out of adapters. */
 export class LoomRuntimeHost {
   readonly #adapters: Map<LoomSessionProfile, LoomRuntimeAdapter>;
   readonly #sessions = new Map<string, LoomRuntimeAdapter>();
+  readonly #eventStores: SessionEventStoreRegistry;
   readonly #idSource: RuntimeIdSource;
   readonly #selections: SelectionService | undefined;
 
@@ -70,8 +81,57 @@ export class LoomRuntimeHost {
     this.#adapters = new Map(
       options.adapters.map((adapter) => [adapter.descriptor.id, adapter] as const),
     );
+    this.#eventStores = options.eventStores;
     this.#idSource = options.idSource ?? defaultIdSource;
     this.#selections = options.selections;
+  }
+
+  async reconcileDurableSessions(): Promise<RuntimeReconciliationReport> {
+    const identities = await this.#eventStores.discover();
+    const report: RuntimeReconciliationReport = {
+      discovered: identities.length,
+      recovered: 0,
+      skipped: 0,
+      failed: 0,
+      interruptedTasks: 0,
+    };
+
+    for (const identity of identities) {
+      const key = runtimeKey(identity.projectId, identity.sessionId);
+      if (this.#sessions.has(key)) {
+        report.skipped += 1;
+        continue;
+      }
+      try {
+        const store = await this.#eventStores.get(identity.projectId, identity.sessionId);
+        const plan = projectSessionRecovery(
+          identity.projectId,
+          identity.sessionId,
+          await store.replay(),
+        );
+        const adapter = this.#adapters.get(plan.profile);
+        if (
+          adapter === undefined ||
+          plan.disposition === "closed" ||
+          plan.disposition === "failed"
+        ) {
+          report.skipped += 1;
+          continue;
+        }
+        report.interruptedTasks += plan.interruptedTaskIds.length;
+        const recovered = await adapter.recover(plan);
+        if (recovered === undefined) {
+          report.failed += 1;
+          continue;
+        }
+        this.#sessions.set(key, adapter);
+        report.recovered += 1;
+      } catch {
+        // A corrupt or unavailable session is isolated; other durable sessions can still recover.
+        report.failed += 1;
+      }
+    }
+    return report;
   }
 
   async createSession(
@@ -213,6 +273,7 @@ export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): Lo
   });
   return new LoomRuntimeHost({
     adapters: [rawPi],
+    eventStores: options.eventStores,
     selections,
     ...(options.idSource === undefined ? {} : { idSource: options.idSource }),
   });
