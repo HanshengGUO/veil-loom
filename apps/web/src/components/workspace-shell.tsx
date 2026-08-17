@@ -7,6 +7,15 @@ import {
   RAW_PI_PROFILE,
 } from "@veilquant/loom-protocol";
 import { useMemo, useState } from "react";
+import {
+  type BrowserConnectionState,
+  useSessionEventStream,
+} from "../hooks/use-session-event-stream";
+import type { ConversationEntry, TaskProjection } from "../lib/session-projection";
+
+const DEMO_PROJECT_ID = "daily-factor-demo";
+const DEMO_SESSION_ID = "raw-pi-demo";
+const DEMO_STREAM_ENABLED = process.env.NODE_ENV === "development";
 
 const CAPABILITY_LABELS: Readonly<Record<LoomCapability, string>> = {
   chat: "Chat",
@@ -23,11 +32,22 @@ const CAPABILITY_LABELS: Readonly<Record<LoomCapability, string>> = {
 
 export function WorkspaceShell() {
   const [profileId, setProfileId] = useState<LoomSessionProfile>("raw-pi");
+  const { projection, connection } = useSessionEventStream({
+    enabled: DEMO_STREAM_ENABLED,
+    basePath: "/loom-daemon",
+    projectId: DEMO_PROJECT_ID,
+    sessionId: DEMO_SESSION_ID,
+  });
+  const sessionProfileId = projection.profile ?? profileId;
+  const sessionFrozen = projection.profile !== undefined;
   const profile = useMemo(
     () =>
-      LOOM_PROFILE_DESCRIPTORS.find((descriptor) => descriptor.id === profileId) ?? RAW_PI_PROFILE,
-    [profileId],
+      LOOM_PROFILE_DESCRIPTORS.find((descriptor) => descriptor.id === sessionProfileId) ??
+      RAW_PI_PROFILE,
+    [sessionProfileId],
   );
+  const latestTask = projection.tasks.at(-1);
+  const activeTab = projection.activeView?.kind === "backtest" ? "Backtest" : "Explore";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-[1680px] flex-col px-4 py-4 sm:px-6 lg:px-8">
@@ -46,16 +66,15 @@ export function WorkspaceShell() {
 
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--muted)]">
-            Example project
+            Daily factor demo
           </span>
-          <span className="rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--muted)]">
-            Daemon offline
-          </span>
+          <ConnectionBadge connection={connection} />
           <button
-            className="rounded-full bg-[var(--accent)] px-4 py-1.5 text-xs font-semibold text-[#17200e] transition hover:brightness-105"
+            className="cursor-not-allowed rounded-full bg-[var(--accent)] px-4 py-1.5 text-xs font-semibold text-[#17200e] opacity-60"
+            disabled
             type="button"
           >
-            Start session
+            {sessionFrozen ? "Session restored" : "Demo session"}
           </button>
         </div>
       </header>
@@ -73,12 +92,13 @@ export function WorkspaceShell() {
         <div className="inline-flex rounded-xl border border-[var(--border)] bg-black/20 p-1">
           {LOOM_PROFILE_DESCRIPTORS.map((descriptor) => (
             <button
-              aria-pressed={profileId === descriptor.id}
+              aria-pressed={sessionProfileId === descriptor.id}
               className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                profileId === descriptor.id
+                sessionProfileId === descriptor.id
                   ? "bg-slate-100 text-slate-950"
                   : "text-[var(--muted)] hover:text-white"
-              }`}
+              } ${sessionFrozen ? "cursor-not-allowed opacity-60" : ""}`}
+              disabled={sessionFrozen}
               key={descriptor.id}
               onClick={() => setProfileId(descriptor.id)}
               type="button"
@@ -116,23 +136,28 @@ export function WorkspaceShell() {
           </div>
 
           <div className="flex-1 space-y-4 overflow-auto p-5">
-            <div className="max-w-[88%] rounded-2xl rounded-tl-sm border border-[var(--border)] bg-[var(--panel-soft)] p-4 text-sm leading-6 text-slate-300">
-              Open the daily factor example and show me where the strategy struggled out of sample.
-            </div>
-            <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-sm border border-lime-200/10 bg-[var(--accent-soft)]/55 p-4 text-sm leading-6 text-slate-200">
-              The repository scaffold is ready. The next implementation slice will stream an ordered
-              Pi session here and publish the first validated exploratory view to the canvas.
-            </div>
+            {projection.conversation.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[var(--border)] p-4 text-sm text-[var(--muted)]">
+                Waiting for the deterministic demo session…
+              </div>
+            ) : (
+              projection.conversation.map((entry) => (
+                <ConversationMessage entry={entry} key={entry.id} />
+              ))
+            )}
             <div className="rounded-xl border border-dashed border-[var(--border)] p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold">Daemon event stream</p>
                   <p className="mt-1 text-xs text-[var(--muted)]">
-                    Append-before-broadcast and reconnect replay are the next issue.
+                    {streamDescription(connection, projection.issue?.message)}
                   </p>
                 </div>
-                <span className="font-mono text-[10px] text-slate-500">not connected</span>
+                <span className="font-mono text-[10px] text-slate-500">
+                  seq {projection.lastSequence}
+                </span>
               </div>
+              {latestTask === undefined ? null : <TaskStatus task={latestTask} />}
             </div>
           </div>
 
@@ -155,10 +180,10 @@ export function WorkspaceShell() {
         <div className="flex min-h-[680px] flex-col">
           <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
             <nav aria-label="Canvas views" className="flex gap-1">
-              {["Explore", "Backtest", "Evidence", "History"].map((tab, index) => (
+              {["Explore", "Backtest", "Evidence", "History"].map((tab) => (
                 <button
                   className={`rounded-lg px-3 py-1.5 text-xs ${
-                    index === 0
+                    tab === activeTab
                       ? "bg-slate-100 font-semibold text-slate-950"
                       : "text-[var(--muted)]"
                   }`}
@@ -170,13 +195,21 @@ export function WorkspaceShell() {
               ))}
             </nav>
             <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500">
-              no active view
+              {projection.activeView?.title ?? "no active view"}
             </span>
           </div>
 
           <div className="grid flex-1 gap-4 p-5 xl:grid-rows-[1.3fr_0.9fr_auto]">
-            <ChartPlaceholder label="Market and trades" variant="market" />
-            <ChartPlaceholder label="Equity and drawdown" variant="equity" />
+            <ChartPlaceholder
+              active={projection.activeView !== undefined}
+              label="Market and trades"
+              variant="market"
+            />
+            <ChartPlaceholder
+              active={projection.activeView !== undefined}
+              label="Equity and drawdown"
+              variant="equity"
+            />
 
             <div className="grid gap-3 sm:grid-cols-3">
               <MetricPlaceholder label="Assurance" value="Exploratory" />
@@ -188,10 +221,10 @@ export function WorkspaceShell() {
           <div className="border-t border-[var(--border)] px-5 py-3">
             <p
               className={`text-xs font-semibold tracking-wide ${
-                profileId === "raw-pi" ? "text-[var(--warning)]" : "text-[var(--accent)]"
+                sessionProfileId === "raw-pi" ? "text-[var(--warning)]" : "text-[var(--accent)]"
               }`}
             >
-              {profileId === "raw-pi"
+              {sessionProfileId === "raw-pi"
                 ? "EXPLORATORY · UNVERIFIED"
                 : "VEIL VERIFICATION AVAILABLE · EXPLORATION REMAINS UNVERIFIED"}
             </p>
@@ -202,10 +235,73 @@ export function WorkspaceShell() {
   );
 }
 
+function ConnectionBadge({ connection }: Readonly<{ connection: BrowserConnectionState }>) {
+  const presentation = {
+    disabled: { label: "Demo stream disabled", className: "text-[var(--muted)]" },
+    connecting: { label: "Connecting daemon", className: "text-[var(--warning)]" },
+    live: { label: "Daemon live", className: "text-[var(--accent)]" },
+    reconnecting: { label: "Replaying events", className: "text-[var(--warning)]" },
+    failed: { label: "Stream rejected", className: "text-red-300" },
+  }[connection.status];
+
+  return (
+    <span
+      className={`rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-xs ${presentation.className}`}
+    >
+      {presentation.label}
+    </span>
+  );
+}
+
+function ConversationMessage({ entry }: Readonly<{ entry: ConversationEntry }>) {
+  if (entry.role === "notice") {
+    return (
+      <div className="rounded-xl border border-dashed border-[var(--border)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
+        {entry.content}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`max-w-[92%] rounded-2xl border p-4 text-sm leading-6 ${
+        entry.role === "assistant"
+          ? "ml-auto rounded-tr-sm border-lime-200/10 bg-[var(--accent-soft)]/55 text-slate-200"
+          : "rounded-tl-sm border-[var(--border)] bg-[var(--panel-soft)] text-slate-300"
+      }`}
+    >
+      {entry.content}
+      {entry.complete ? null : <span className="ml-1 animate-pulse text-[var(--accent)]">▍</span>}
+    </div>
+  );
+}
+
+function TaskStatus({ task }: Readonly<{ task: TaskProjection }>) {
+  return (
+    <div className="mt-3 flex items-center justify-between border-t border-[var(--border)] pt-3 text-[11px]">
+      <span className="text-slate-400">{task.label}</span>
+      <span className="font-mono text-slate-500">{task.status}</span>
+    </div>
+  );
+}
+
+function streamDescription(connection: BrowserConnectionState, issue: string | undefined): string {
+  if (issue !== undefined) return issue;
+  if (connection.status === "live")
+    return "Durable replay is current; new events will appear here.";
+  if (connection.status === "reconnecting") {
+    return `Reconnecting from the last applied sequence (attempt ${connection.attempt}).`;
+  }
+  if (connection.status === "failed") return "The stream failed closed after a protocol error.";
+  if (connection.status === "disabled") return "Run both development processes to enable the demo.";
+  return "Opening the local deterministic event stream…";
+}
+
 function ChartPlaceholder({
+  active,
   label,
   variant,
-}: Readonly<{ label: string; variant: "market" | "equity" }>) {
+}: Readonly<{ active: boolean; label: string; variant: "market" | "equity" }>) {
   const bars = variant === "market" ? [32, 48, 40, 68, 52, 76, 60, 45, 70, 58, 82, 64] : [];
 
   return (
@@ -213,7 +309,7 @@ function ChartPlaceholder({
       <div className="mb-5 flex items-center justify-between">
         <h2 className="text-xs font-semibold text-slate-300">{label}</h2>
         <span className="text-[10px] uppercase tracking-widest text-slate-600">
-          waiting for data
+          {active ? "demo fixture" : "waiting for view"}
         </span>
       </div>
       <div className="absolute inset-x-4 bottom-5 top-14 flex items-end gap-2 border-b border-l border-slate-700/70 px-3 pt-3">

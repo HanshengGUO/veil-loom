@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createLoomApp } from "./app.js";
+import { seedDemoSession } from "./demo-session.js";
 import { SessionEventStoreRegistry } from "./event-store.js";
 import { resolveLoomStateRoot } from "./state-root.js";
 
@@ -17,6 +18,9 @@ export function parseDaemonPort(input: string | undefined): number {
 
 const port = parseDaemonPort(process.env.LOOM_DAEMON_PORT);
 const eventStores = new SessionEventStoreRegistry({ stateRoot: resolveLoomStateRoot() });
+const demoSessionEnabled = process.env.LOOM_DEMO_SESSION === "1";
+
+if (demoSessionEnabled) await seedDemoSession(eventStores);
 
 serve({
   fetch: createLoomApp({ eventStores }).fetch,
@@ -24,4 +28,6 @@ serve({
   port,
 });
 
-process.stdout.write(`Veil Loom daemon listening on http://${LOOPBACK_HOST}:${port}\n`);
+process.stdout.write(
+  `Veil Loom daemon listening on http://${LOOPBACK_HOST}:${port}${demoSessionEnabled ? " with the demo session" : ""}\n`,
+);

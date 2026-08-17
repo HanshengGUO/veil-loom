@@ -8,7 +8,8 @@ honest. Raw Pi sessions can chat, code, run local tools, and publish interactive
 Veil sessions add guarded data, promotion contracts, statistical gates, Experiment memory, and
 reproduction.
 
-> Status: pre-alpha repository scaffold. Nothing is published to npm yet.
+> Status: pre-alpha with a working event/replay backbone and deterministic browser demo. Pi is not
+> integrated yet, and nothing is published to npm.
 
 ## Session profiles
 
@@ -64,9 +65,14 @@ npm run dev:daemon
 npm run dev:web
 ```
 
-The initial daemon listens on `127.0.0.1:43120`; the web app uses Next.js's normal development
-address. Durable ordered event replay is in place, but the current page is still a product shell and
-does not run Pi yet.
+Both processes bind to loopback. In development, the daemon seeds a durable Raw Pi demo session and
+the web app replays it into the conversation, task, connection, and view state. Refreshing the page
+rebuilds that state from event one; reconnects resume from the last event the reducer actually
+applied.
+
+The chart shapes are still placeholders, and the demo does not run Pi or a backtest. Its purpose is
+to exercise ordering, recovery, profile freezing, and honest exploratory labels before local
+execution is enabled.
 
 ## Initial milestone
 

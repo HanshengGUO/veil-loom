@@ -44,6 +44,11 @@ the session sequence as the SSE `id`. A reconnect may send `Last-Event-ID` inste
 `afterSequence`. A cursor beyond the durable tail returns `EVENT_CURSOR_AHEAD`; the daemon never
 guesses or skips ahead.
 
+A consumer applies only `lastSequence + 1`. It may ignore an exact duplicate, but reusing a sequence
+or event ID with different content is a protocol conflict. If sequence 12 arrives after sequence 10,
+the consumer must not apply it or let the browser's implicit SSE cursor advance recovery past 11. It
+closes the connection and explicitly requests replay after 10.
+
 Large chart series will be referenced as immutable blobs rather than repeated in an unbounded event
 log.
 

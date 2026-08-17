@@ -7,7 +7,11 @@ content-addressed blob identifiers.
 The current pre-alpha daemon binds only to `127.0.0.1` and exposes read-only health, capability,
 event replay, and event stream routes. Startup-token and Origin enforcement are the next security
 milestone and must land before browser-triggered local execution. Do not expose this daemon through
-a proxy or a non-loopback bind.
+a user-configured proxy or a non-loopback bind.
+
+The development web server also binds to `127.0.0.1`. Its temporary rewrite matches only the demo
+session SSE route, accepts only an HTTP loopback destination, and is absent from production builds.
+It is not the eventual authenticated daemon transport.
 
 ## Protected values
 

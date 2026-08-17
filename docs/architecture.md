@@ -42,6 +42,11 @@ silently dropped.
 The browser reconnects with the last sequence it applied. Subscription and replay are registered as
 one serialized operation, so an event cannot fall between the replay snapshot and the live stream.
 
+The browser reducer independently checks the protocol envelope, project/session ownership, SSE ID,
+sequence, event identity, and duplicate content. An exact duplicate is harmless. A gap closes the
+stream and starts a new explicit replay from the last applied sequence; a conflicting duplicate or
+malformed event fails closed and remains visible as a connection error.
+
 State lives in the normal per-user application-state directory:
 
 - Linux: `$XDG_STATE_HOME/veil-loom`, or `~/.local/state/veil-loom`;
@@ -49,6 +54,13 @@ State lives in the normal per-user application-state directory:
 - Windows: `%LOCALAPPDATA%\\Veil Loom`.
 
 `LOOM_STATE_DIR` provides an explicit override for development and packaging.
+
+## Development fixture
+
+`npm run dev:daemon` enables one deterministic Raw Pi session. Seeding is idempotent across daemon
+restarts and refuses to overwrite a conflicting log. `npm run dev:web` exposes only that SSE route
+through a development-only loopback rewrite, avoiding a broad daemon proxy. Production builds do
+not include this rewrite or enable the demo stream.
 
 ## Dependency direction
 

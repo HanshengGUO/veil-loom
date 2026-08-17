@@ -14,3 +14,5 @@ are tracked independently from package versions.
 - Versioned session event envelopes and redacted API errors.
 - Durable per-session append-before-broadcast logs with restart replay.
 - Cursor-based JSON replay and reconnectable server-sent event streams.
+- Gap-aware browser projections with exact duplicate detection and explicit cursor recovery.
+- An idempotent durable Raw Pi demo session rendered in the dual-pane development shell.
