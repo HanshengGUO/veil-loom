@@ -5,7 +5,6 @@ import {
   isLoomCreateSessionRequest,
   isLoomPortableId,
   isLoomSendMessageRequest,
-  LOOM_PROFILE_DESCRIPTORS,
   type LoomAuthResponse,
   type LoomCapabilitiesResponse,
   type LoomErrorCode,
@@ -113,9 +112,21 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
   app.get("/v0/capabilities", (context) => {
     const response = {
       format: "loom.capabilities.v0",
-      profiles: LOOM_PROFILE_DESCRIPTORS,
+      profiles: [...runtimeHost.profileDescriptors()],
     } satisfies LoomCapabilitiesResponse;
     return context.json(response);
+  });
+
+  app.get("/v0/projects/:projectId", async (context) => {
+    try {
+      context.header("Cache-Control", "no-store");
+      context.header("Pragma", "no-cache");
+      return context.json(
+        await runtimeHost.projectReadiness(requireProjectId(context.req.param("projectId"))),
+      );
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
   });
 
   app.post("/v0/projects/:projectId/sessions", async (context) => {
@@ -432,6 +443,9 @@ function eventErrorResponse(error: unknown): Response {
     } else if (error.code === "RUNTIME_UNAVAILABLE") {
       status = 503;
       message = "The requested runtime is unavailable";
+    } else if (error.code === "PROJECT_NOT_READY") {
+      status = 409;
+      message = "The project is not ready for the requested profile";
     } else {
       status = 409;
       message =

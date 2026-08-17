@@ -14,6 +14,7 @@ import {
   isLoomEventEnvelope,
   isLoomPiRuntimeDescriptor,
   isLoomPortableId,
+  isLoomProjectReadinessResponse,
   isLoomPublishedViewDescriptor,
   isLoomSelection,
   isLoomSelectionCreatedPayload,
@@ -43,6 +44,84 @@ describe("Loom profile protocol", () => {
       Check(LoomProfileDescriptorSchema, {
         ...RAW_PI_PROFILE,
         verified: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("Loom project readiness protocol", () => {
+  const runtime = {
+    package: "veil-quant",
+    installedVersion: "0.1.0",
+    supportedRange: ">=0.1.0 <0.2.0",
+    detectedFormats: ["veil.project.v0"],
+  } as const;
+
+  it("accepts exact ready and invalid Veil project summaries", () => {
+    expect(
+      isLoomProjectReadinessResponse({
+        format: "loom.project-readiness.v0",
+        projectId: "daily-factor-demo",
+        profile: "veil",
+        status: "ready",
+        runtime,
+        capabilities: [...VEIL_PROFILE.capabilities],
+        project: {
+          format: "veil.project.v0",
+          datasetCount: 1,
+          runtimeCount: 1,
+          promotionConcurrency: 2,
+          costModelCount: 1,
+          nullGeneratorCount: 1,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isLoomProjectReadinessResponse({
+        format: "loom.project-readiness.v0",
+        projectId: "broken-project",
+        profile: "veil",
+        status: "invalid",
+        runtime,
+        capabilities: [],
+        issue: {
+          code: "VEIL_PROJECT_INVALID",
+          message: "The project declaration is invalid.",
+          remedy: "Correct the declaration and retry.",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects forged readiness, reordered capabilities, and unknown fields", () => {
+    const ready = {
+      format: "loom.project-readiness.v0",
+      projectId: "daily-factor-demo",
+      profile: "veil",
+      status: "ready",
+      runtime,
+      capabilities: [...VEIL_PROFILE.capabilities],
+      project: {
+        format: "veil.project.v0",
+        datasetCount: 1,
+        runtimeCount: 1,
+        promotionConcurrency: 2,
+        costModelCount: 1,
+        nullGeneratorCount: 1,
+      },
+    } as const;
+    expect(isLoomProjectReadinessResponse({ ...ready, project: undefined })).toBe(false);
+    expect(
+      isLoomProjectReadinessResponse({
+        ...ready,
+        capabilities: [...ready.capabilities].reverse(),
+      }),
+    ).toBe(false);
+    expect(isLoomProjectReadinessResponse({ ...ready, root: "/private/project" })).toBe(false);
+    expect(
+      isLoomProjectReadinessResponse({
+        ...ready,
+        runtime: { ...runtime, installedVersion: null, detectedFormats: [] },
       }),
     ).toBe(false);
   });

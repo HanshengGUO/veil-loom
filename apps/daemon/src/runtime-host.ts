@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import {
   isLoomPortableId,
   type LoomAcceptedCommandResponse,
+  type LoomProfileDescriptor,
+  type LoomProjectReadinessResponse,
   type LoomSelection,
   type LoomSessionProfile,
 } from "@veilquant/loom-protocol";
@@ -10,12 +12,14 @@ import {
   DeterministicPiSessionFactory,
   type DeterministicPiSessionFactoryOptions,
 } from "./pi/deterministic-session.js";
+import { LoomProjectRegistry } from "./project-readiness.js";
 import { DailyFactorReferenceAdapter } from "./reference-backtest/reference-adapter.js";
 import { ResearchArtifactStore } from "./research-artifacts.js";
 import {
   type LoomRuntimeAdapter,
   RawPiRuntimeAdapter,
   RuntimeAdapterError,
+  VeilPiRuntimeAdapter,
 } from "./runtime-adapter.js";
 import { SelectionService } from "./selection-service.js";
 import { projectSessionRecovery } from "./session-recovery.js";
@@ -27,6 +31,7 @@ export type RuntimeIdSource = (kind: RuntimeIdKind) => string;
 export interface RuntimeHostOptions {
   adapters: readonly LoomRuntimeAdapter[];
   eventStores: SessionEventStoreRegistry;
+  projects: LoomProjectRegistry;
   selections?: SelectionService;
   idSource?: RuntimeIdSource;
 }
@@ -74,6 +79,7 @@ export class LoomRuntimeHost {
   readonly #adapters: Map<LoomSessionProfile, LoomRuntimeAdapter>;
   readonly #sessions = new Map<string, LoomRuntimeAdapter>();
   readonly #eventStores: SessionEventStoreRegistry;
+  readonly #projects: LoomProjectRegistry;
   readonly #idSource: RuntimeIdSource;
   readonly #selections: SelectionService | undefined;
 
@@ -81,9 +87,22 @@ export class LoomRuntimeHost {
     this.#adapters = new Map(
       options.adapters.map((adapter) => [adapter.descriptor.id, adapter] as const),
     );
+    if (this.#adapters.size !== options.adapters.length) {
+      throw new Error("Loom runtime profile identifiers must be unique");
+    }
     this.#eventStores = options.eventStores;
+    this.#projects = options.projects;
     this.#idSource = options.idSource ?? defaultIdSource;
     this.#selections = options.selections;
+  }
+
+  profileDescriptors(): readonly LoomProfileDescriptor[] {
+    return [...this.#adapters.values()].map((adapter) => adapter.descriptor);
+  }
+
+  projectReadiness(projectId: string): Promise<LoomProjectReadinessResponse> {
+    assertRuntimeId(projectId);
+    return this.#projects.readiness(projectId);
   }
 
   async reconcileDurableSessions(): Promise<RuntimeReconciliationReport> {
@@ -257,6 +276,7 @@ export interface DefaultRuntimeHostOptions {
   fixture?: DeterministicPiSessionFactoryOptions;
   idSource?: RuntimeIdSource;
   selections?: SelectionService;
+  projects?: LoomProjectRegistry;
 }
 
 export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): LoomRuntimeHost {
@@ -265,15 +285,26 @@ export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): Lo
   const referenceBacktests = new DailyFactorReferenceAdapter(artifacts);
   const selections =
     options.selections ?? new SelectionService({ artifacts, eventStores: options.eventStores });
+  const projects = options.projects ?? new LoomProjectRegistry({ fallbackRoot: options.cwd });
+  const sessionFactory = new DeterministicPiSessionFactory({ referenceBacktests }, options.fixture);
   const rawPi = new RawPiRuntimeAdapter({
     eventStores: options.eventStores,
-    sessionFactory: new DeterministicPiSessionFactory({ referenceBacktests }, options.fixture),
+    sessionFactory,
     cwd: options.cwd,
     agentDir: options.agentDir,
+    projects,
+  });
+  const veilPi = new VeilPiRuntimeAdapter({
+    eventStores: options.eventStores,
+    sessionFactory,
+    cwd: options.cwd,
+    agentDir: options.agentDir,
+    projects,
   });
   return new LoomRuntimeHost({
-    adapters: [rawPi],
+    adapters: [rawPi, veilPi],
     eventStores: options.eventStores,
+    projects,
     selections,
     ...(options.idSource === undefined ? {} : { idSource: options.idSource }),
   });

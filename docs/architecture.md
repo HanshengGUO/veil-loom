@@ -34,8 +34,35 @@ clients bootstrap again before resuming from their durable cursor.
 ## Profiles
 
 Raw Pi and Veil are profiles over one Pi host rather than unrelated backends. A session freezes its
-profile when it starts. Moving from Raw Pi to Veil creates a new verification attempt because Veil
-must register chronology and independently re-execute the artifact.
+profile when it starts. The planned Raw Pi to Veil transition creates a new verification attempt
+because Veil must register chronology and independently re-execute the artifact.
+
+The daemon registers project roots at startup; the browser supplies only a portable project ID. Raw
+Pi receives the canonical registered root. Before a Veil session starts, the daemon also loads the
+project through the published `veil-quant` API and validates the supported public shape. Missing
+packages, unsupported versions, unreadable roots, and invalid project declarations fail before a
+session event is written.
+
+`veil-quant` currently publishes TypeScript source, so the daemon uses its declared `tsx` runtime to
+load that public entry point. Loom pins the tested `>=0.1.0 <0.2.0` range, checks the expected tool
+and project formats, and does not import Veil engine internals. The loaded extension adds Veil's
+data, backtest, and memory tools to a Veil Pi session. In this slice Loom still publishes only
+exploratory reference views; promotion commands and evidence projection are the next integration
+boundary.
+
+### Project readiness
+
+Readiness has three public states:
+
+- `ready`: the tested Veil runtime and project declaration loaded successfully;
+- `invalid`: the runtime loaded, but the project did not;
+- `unavailable`: the runtime or daemon-authorized project root is unavailable.
+
+The response contains the installed and supported versions, detected project format, capabilities,
+and aggregate counts for datasets, runtimes, cost models, and null generators. It never contains the
+project root, source locator, dataset ID, or environment name. The Web app validates the exact
+response and enables the Veil profile only for `ready` projects. Readiness is capability discovery,
+not evidence or assurance.
 
 ## Long-running work
 
@@ -51,9 +78,11 @@ into Loom events. It does not publish thinking blocks, tool arguments, tool resu
 errors, environment values, or local paths. Every session records the Pi package version and a
 provider/model fingerprint without recording credentials.
 
-The current slice enables only a deterministic offline provider and one reference-backtest Loom
-tool. The tool can invoke the committed adapter but has no shell, filesystem, or network authority.
-Real provider configuration and local coding tools remain opt-in work; they will stay in the daemon
+The current slice enables only a deterministic offline provider, one reference-backtest Loom tool,
+and the version-pinned Veil extension for ready projects. The scripted response invokes only the
+committed reference adapter; it does not trigger a promotion. The Loom reference tool has no shell,
+filesystem, or network authority. Veil tools retain the local authority documented by Veil. Real
+provider configuration and local coding tools remain opt-in work; they will stay in the daemon
 rather than moving into the browser.
 
 ## Research views
@@ -137,8 +166,9 @@ State lives in the normal per-user application-state directory:
 `npm run dev:daemon` runs one scripted request through a real Pi session and Pi's offline faux
 provider, then imports the committed daily-factor reference output. The resulting event projection
 and content-addressed view are durable, are validated on restart, and refuse conflicting identities.
-`npm run dev:web` authenticates directly to the loopback daemon and renders the real fixture series.
-Production builds do not enable the demo stream.
+The demo root includes a valid Veil project declaration, so the Web app also renders a path-free
+readiness summary. `npm run dev:web` authenticates directly to the loopback daemon and renders the
+real fixture series. Production builds do not enable the demo stream.
 
 ## Dependency direction
 

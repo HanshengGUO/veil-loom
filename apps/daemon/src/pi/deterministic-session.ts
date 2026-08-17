@@ -13,13 +13,19 @@ import {
   type AgentSession,
   createAgentSession,
   DefaultResourceLoader,
+  type InlineExtension,
   ModelRuntime,
   VERSION as PI_VERSION,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { LoomPiRuntimeDescriptor, LoomSelection } from "@veilquant/loom-protocol";
+import type {
+  LoomPiRuntimeDescriptor,
+  LoomSelection,
+  LoomSessionProfile,
+} from "@veilquant/loom-protocol";
 import type { DailyFactorReferenceAdapter } from "../reference-backtest/reference-adapter.js";
+import type { LoadedVeilApi, VeilProject } from "../veil-api.js";
 import {
   createLoomReferenceBacktestExtension,
   LOOM_REFERENCE_BACKTEST_TOOL_NAME,
@@ -50,8 +56,13 @@ export interface HostedPiSession {
 export interface PiSessionFactoryInput {
   projectId: string;
   sessionId: string;
+  profile: LoomSessionProfile;
   cwd: string;
   agentDir: string;
+  veil?: {
+    api: LoadedVeilApi;
+    project: VeilProject;
+  };
   recovery?: {
     publicContext?: string;
     interruptedTaskIds: readonly string[];
@@ -113,29 +124,51 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       { projectTrusted: false },
     );
     let taskId: string | undefined;
+    const extensionFactories: InlineExtension[] = [
+      createLoomReferenceBacktestExtension({
+        publish: async () => {
+          if (taskId === undefined) throw new Error("The Loom task context is unavailable");
+          return this.#dependencies.referenceBacktests.publishCommitted({
+            projectId: input.projectId,
+            sessionId: input.sessionId,
+            taskId,
+          });
+        },
+      }),
+    ];
+    const tools = [LOOM_REFERENCE_BACKTEST_TOOL_NAME];
+    if (input.profile === "veil") {
+      const veil = input.veil;
+      if (veil === undefined) throw new Error("The Veil project context is unavailable");
+      extensionFactories.push(
+        veil.api.api.createVeilExtension({
+          projectLoader: async (cwd) => {
+            if (cwd !== input.cwd) throw new Error("The Veil project ownership changed");
+            return veil.project;
+          },
+        }),
+      );
+      tools.push(
+        veil.api.api.VEIL_DATA_TOOL,
+        veil.api.api.VEIL_BACKTEST_TOOL,
+        veil.api.api.VEIL_MEMORY_TOOL,
+      );
+    }
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.cwd,
       agentDir: input.agentDir,
       settingsManager,
-      extensionFactories: [
-        createLoomReferenceBacktestExtension({
-          publish: async () => {
-            if (taskId === undefined) throw new Error("The Loom task context is unavailable");
-            return this.#dependencies.referenceBacktests.publishCommitted({
-              projectId: input.projectId,
-              sessionId: input.sessionId,
-              taskId,
-            });
-          },
-        }),
-      ],
+      extensionFactories,
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
       systemPrompt:
-        "You are running Loom's deterministic offline fixture. Use only the supplied Loom tool.",
+        input.profile === "veil"
+          ? "You are running Loom's deterministic offline Veil fixture. Use only the supplied Loom and Veil tools."
+          : "You are running Loom's deterministic offline fixture. Use only the supplied Loom tool.",
     });
     await resourceLoader.reload();
     const extensionErrors = resourceLoader.getExtensions().errors;
@@ -150,7 +183,7 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       model: faux.getModel(),
       modelRuntime,
       thinkingLevel: "off",
-      tools: [LOOM_REFERENCE_BACKTEST_TOOL_NAME],
+      tools,
       resourceLoader,
       sessionManager: sessionState.manager,
       settingsManager,
@@ -164,7 +197,10 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       provider: LOOM_FIXTURE_PROVIDER,
       model: LOOM_FIXTURE_MODEL,
       mode: "offline-fixture",
-      fingerprint: `pi-${PI_VERSION}__${LOOM_FIXTURE_PROVIDER}__${LOOM_FIXTURE_MODEL}`,
+      fingerprint:
+        input.profile === "raw-pi"
+          ? `pi-${PI_VERSION}__${LOOM_FIXTURE_PROVIDER}__${LOOM_FIXTURE_MODEL}`
+          : `pi-${PI_VERSION}__${LOOM_FIXTURE_PROVIDER}__${LOOM_FIXTURE_MODEL}__veil-${input.veil?.api.version ?? "unavailable"}`,
     } as const satisfies LoomPiRuntimeDescriptor;
 
     return {
@@ -268,6 +304,7 @@ function appendSessionMarker(manager: SessionManager, input: PiSessionFactoryInp
     format: LOOM_PI_SESSION_MARKER,
     projectId: input.projectId,
     sessionId: input.sessionId,
+    profile: input.profile,
   });
 }
 
@@ -283,7 +320,8 @@ function assertSessionMarker(manager: SessionManager, input: PiSessionFactoryInp
       "projectId" in data &&
       data.projectId === input.projectId &&
       "sessionId" in data &&
-      data.sessionId === input.sessionId
+      data.sessionId === input.sessionId &&
+      ("profile" in data ? data.profile === input.profile : input.profile === "raw-pi")
     );
   });
   if (matches.length !== 1) throw new Error("The Loom Pi session marker is invalid");

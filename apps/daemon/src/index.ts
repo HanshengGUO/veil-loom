@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { createLoomApp } from "./app.js";
-import { seedDemoSession } from "./demo-session.js";
+import { DEMO_PROJECT_ID, seedDemoSession } from "./demo-session.js";
 import { SessionEventStoreRegistry } from "./event-store.js";
+import { LoomProjectRegistry, resolveConfiguredProjectId } from "./project-readiness.js";
 import { ResearchArtifactStore } from "./research-artifacts.js";
 import { createDefaultRuntimeHost } from "./runtime-host.js";
 import { DaemonSecurity, resolveAllowedWebOrigin } from "./security.js";
@@ -12,6 +13,14 @@ import { resolveLoomStateRoot } from "./state-root.js";
 
 const port = parseDaemonPort(process.env.LOOM_DAEMON_PORT);
 const stateRoot = resolveLoomStateRoot();
+const demoSessionEnabled = process.env.LOOM_DEMO_SESSION === "1";
+const projectId = demoSessionEnabled
+  ? DEMO_PROJECT_ID
+  : resolveConfiguredProjectId(process.env.LOOM_PROJECT_ID);
+const projectRoot = demoSessionEnabled
+  ? join(process.cwd(), "examples", "daily-factor")
+  : process.cwd();
+const projects = new LoomProjectRegistry({ registrations: [{ projectId, root: projectRoot }] });
 const eventStores = new SessionEventStoreRegistry({ stateRoot });
 const artifacts = new ResearchArtifactStore({ stateRoot });
 const selections = new SelectionService({ artifacts, eventStores });
@@ -21,12 +30,11 @@ const runtimeHost = createDefaultRuntimeHost({
   selections,
   cwd: process.cwd(),
   agentDir: join(stateRoot, "pi"),
+  projects,
 });
 const security = new DaemonSecurity({
   allowedOrigin: resolveAllowedWebOrigin(process.env.LOOM_WEB_ORIGIN),
 });
-const demoSessionEnabled = process.env.LOOM_DEMO_SESSION === "1";
-
 await runtimeHost.reconcileDurableSessions();
 if (demoSessionEnabled) await seedDemoSession(eventStores, runtimeHost);
 

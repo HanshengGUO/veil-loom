@@ -47,6 +47,17 @@ The browser must not receive:
 Session logs accept only versioned, JSON-safe event envelopes. Public API failures use stable error
 codes and do not return storage paths or private filesystem diagnostics.
 
+Project roots are daemon configuration, not request data. At startup the daemon binds a portable
+project ID to one canonical non-root directory. The browser can ask for that ID's readiness but
+cannot submit, replace, or traverse a host path. The public summary contains only the tested Veil
+version, formats, capabilities, and aggregate counts. Veil's public diagnostics are bounded and
+have the registered root removed again at the Loom boundary before they reach the browser.
+
+The installed `veil-quant` package is trusted daemon code and runs with the user's permissions; its
+presence is not a sandbox. Loom checks a pinned minor range and public API shape before loading it.
+An incompatible runtime or invalid project keeps the Veil profile unavailable while Raw Pi remains
+usable. Capability readiness never grants verified assurance.
+
 Pi's event stream is an internal input, not a public passthrough. Loom publishes visible assistant
 text and coarse lifecycle facts, but drops thinking blocks, tool arguments, tool result bodies, and
 provider error messages. The committed CI/development provider is Pi's in-memory faux provider with
@@ -76,6 +87,7 @@ out-of-range, mixed-unit, unavailable-series, and cross-session selections fail 
 
 ## Non-goals
 
-The initial release does not defend against a deliberately malicious local user or provide an
-operating-system sandbox. Pi tools and user backtests run with the user's permissions. Remote daemon
-binding and multi-user access are not supported.
+The initial release does not defend against a deliberately malicious local user, dependency, or
+project configuration, and it does not provide an operating-system sandbox. Pi tools, Veil tools,
+and user backtests run with the user's permissions. Remote daemon binding and multi-user access are
+not supported.

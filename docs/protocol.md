@@ -6,6 +6,7 @@ TypeBox schemas and TypeScript types without network, filesystem, React, Pi, or 
 The initial contract defines:
 
 - session profiles and capabilities;
+- Veil runtime and project readiness;
 - assurance states and their allowed issuer;
 - daemon health and profile discovery responses;
 - ordered session events, replay responses, and redacted errors.
@@ -31,6 +32,60 @@ The startup secret is delivered only in an HttpOnly, SameSite session cookie. It
 256 bits of randomness for each daemon process, never accepted in a query parameter, and invalid
 after restart. Missing or invalid credentials return `AUTH_REQUIRED`; an absent or mismatched Origin
 returns `ORIGIN_FORBIDDEN`. The daemon never uses `Access-Control-Allow-Origin: *`.
+
+## Project readiness
+
+The protected, non-cacheable readiness route is:
+
+```text
+GET /v0/projects/:projectId
+```
+
+A ready project returns an exact `loom.project-readiness.v0` record:
+
+```json
+{
+  "format": "loom.project-readiness.v0",
+  "projectId": "daily-factor-demo",
+  "profile": "veil",
+  "status": "ready",
+  "runtime": {
+    "package": "veil-quant",
+    "installedVersion": "0.1.0",
+    "supportedRange": ">=0.1.0 <0.2.0",
+    "detectedFormats": ["veil.project.v0"]
+  },
+  "capabilities": [
+    "chat",
+    "local-code",
+    "loom-chart",
+    "loom-selection",
+    "task-cancel",
+    "session-replay",
+    "veil-data",
+    "veil-promotion",
+    "veil-experiment",
+    "veil-reproduction"
+  ],
+  "project": {
+    "format": "veil.project.v0",
+    "datasetCount": 1,
+    "runtimeCount": 1,
+    "promotionConcurrency": 2,
+    "costModelCount": 1,
+    "nullGeneratorCount": 1
+  }
+}
+```
+
+`invalid` and `unavailable` responses have no project summary or capabilities. They carry one
+bounded public issue with `code`, `message`, and `remedy`. A response never includes an absolute
+root, source locator, dataset ID, environment name, or raw data. Unknown fields, forged ownership,
+reordered capabilities, and contradictory status fields fail protocol validation.
+
+Readiness says only that the Veil profile can load. It does not create a verification attempt,
+Experiment, evidence reference, or non-exploratory assurance. Creating a Veil session while the
+project is not ready returns `PROJECT_NOT_READY` without creating a durable session.
 
 ## Session events
 
@@ -174,4 +229,4 @@ fingerprint so a replay remains attributable.
 
 Loom may issue only `exploratory` assurance. Contract and Experiment states must be independently
 derived from validated Veil records. The browser never infers assurance from a metric, process exit
-code, model message, or visual similarity.
+code, model message, visual similarity, loaded Veil extension, or `ready` project response.

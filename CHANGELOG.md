@@ -34,3 +34,9 @@ are tracked independently from package versions.
   public-transcript reconstruction for legacy sessions.
 - Explicit `task.interrupted` terminals for work that lacked a durable result when the daemon
   stopped.
+- A version-pinned `veil-quant` runtime boundary, daemon-authorized project registry, and exact
+  path-free `loom.project-readiness.v0` response.
+- Restart-resilient Veil Pi sessions that load the public Veil extension while keeping all Loom
+  views exploratory until independent evidence is projected.
+- A Web readiness client that fails closed on forged ownership, malformed data, and oversized
+  responses and enables the Veil profile only for ready projects.

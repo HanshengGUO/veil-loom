@@ -741,6 +741,88 @@ export function isLoomPortableId(input: unknown): input is LoomPortableId {
   return typeof input === "string" && PORTABLE_ID_REGEXP.test(input);
 }
 
+export const LoomProjectReadinessStatusSchema = Type.Union(
+  [Type.Literal("ready"), Type.Literal("invalid"), Type.Literal("unavailable")],
+  { $id: "LoomProjectReadinessStatus" },
+);
+
+export type LoomProjectReadinessStatus = Static<typeof LoomProjectReadinessStatusSchema>;
+
+export const LoomProjectReadinessIssueSchema = Type.Object(
+  {
+    code: Type.String({ pattern: "^[A-Z][A-Z0-9_]{1,63}$" }),
+    message: Type.String({ minLength: 1, maxLength: 512 }),
+    remedy: Type.String({ minLength: 1, maxLength: 1_024 }),
+  },
+  { additionalProperties: false, $id: "LoomProjectReadinessIssue" },
+);
+
+export type LoomProjectReadinessIssue = Static<typeof LoomProjectReadinessIssueSchema>;
+
+export const LoomVeilRuntimeReadinessSchema = Type.Object(
+  {
+    package: Type.Literal("veil-quant"),
+    installedVersion: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
+    supportedRange: Type.Literal(">=0.1.0 <0.2.0"),
+    detectedFormats: Type.Array(Type.Literal("veil.project.v0"), {
+      maxItems: 1,
+      uniqueItems: true,
+    }),
+  },
+  { additionalProperties: false, $id: "LoomVeilRuntimeReadiness" },
+);
+
+export type LoomVeilRuntimeReadiness = Static<typeof LoomVeilRuntimeReadinessSchema>;
+
+export const LoomVeilProjectSummarySchema = Type.Object(
+  {
+    format: Type.Literal("veil.project.v0"),
+    datasetCount: Type.Integer({ minimum: 1 }),
+    runtimeCount: Type.Integer({ minimum: 1 }),
+    promotionConcurrency: Type.Integer({ minimum: 1, maximum: 16 }),
+    costModelCount: Type.Integer({ minimum: 0 }),
+    nullGeneratorCount: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false, $id: "LoomVeilProjectSummary" },
+);
+
+export type LoomVeilProjectSummary = Static<typeof LoomVeilProjectSummarySchema>;
+
+export const LoomProjectReadinessResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.project-readiness.v0"),
+    projectId: LoomPortableIdSchema,
+    profile: Type.Literal("veil"),
+    status: LoomProjectReadinessStatusSchema,
+    runtime: LoomVeilRuntimeReadinessSchema,
+    capabilities: Type.Array(LoomCapabilitySchema, { uniqueItems: true }),
+    project: Type.Optional(LoomVeilProjectSummarySchema),
+    issue: Type.Optional(LoomProjectReadinessIssueSchema),
+  },
+  { additionalProperties: false, $id: "LoomProjectReadinessResponse" },
+);
+
+export type LoomProjectReadinessResponse = Static<typeof LoomProjectReadinessResponseSchema>;
+
+export function isLoomProjectReadinessResponse(
+  input: unknown,
+): input is LoomProjectReadinessResponse {
+  if (!Check(LoomProjectReadinessResponseSchema, input)) return false;
+  const ready = input.status === "ready";
+  const runtimeLoaded =
+    input.runtime.installedVersion !== null &&
+    sameStrings(input.runtime.detectedFormats, ["veil.project.v0"]);
+  return (
+    (ready
+      ? input.project !== undefined && input.issue === undefined
+      : input.project === undefined && input.issue !== undefined) &&
+    (ready
+      ? sameStrings(input.capabilities, VEIL_PROFILE.capabilities)
+      : input.capabilities.length === 0) &&
+    (input.status === "unavailable" || runtimeLoaded)
+  );
+}
+
 export const LoomCreateSessionRequestSchema = Type.Object(
   {
     format: Type.Literal("loom.session.create.v0"),
@@ -884,6 +966,7 @@ export const LoomErrorCodeSchema = Type.Union(
     Type.Literal("AUTH_REQUIRED"),
     Type.Literal("ORIGIN_FORBIDDEN"),
     Type.Literal("PROFILE_UNAVAILABLE"),
+    Type.Literal("PROJECT_NOT_READY"),
     Type.Literal("SESSION_NOT_FOUND"),
     Type.Literal("SESSION_BUSY"),
     Type.Literal("SESSION_CONFLICT"),
@@ -922,6 +1005,10 @@ export function compareLoomTime(left: LoomTime, right: LoomTime): number {
   const leftValue = BigInt(left.epoch) * factors[left.unit];
   const rightValue = BigInt(right.epoch) * factors[right.unit];
   return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function orderedTimes<T extends { time: LoomTime }>(items: readonly T[], strict: boolean): boolean {

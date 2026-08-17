@@ -9,6 +9,7 @@ import {
 } from "@veilquant/loom-protocol";
 import { useMemo, useState } from "react";
 import { type BacktestViewState, useBacktestView } from "../hooks/use-backtest-view";
+import { type ProjectReadinessState, useProjectReadiness } from "../hooks/use-project-readiness";
 import {
   type BrowserConnectionState,
   useSessionEventStream,
@@ -37,6 +38,11 @@ const CAPABILITY_LABELS: Readonly<Record<LoomCapability, string>> = {
 
 export function WorkspaceShell() {
   const [profileId, setProfileId] = useState<LoomSessionProfile>("raw-pi");
+  const projectReadiness = useProjectReadiness({
+    enabled: DEMO_STREAM_ENABLED,
+    daemonOrigin: DAEMON_ORIGIN,
+    projectId: DEMO_PROJECT_ID,
+  });
   const { projection, connection } = useSessionEventStream({
     enabled: DEMO_STREAM_ENABLED,
     daemonOrigin: DAEMON_ORIGIN,
@@ -52,6 +58,7 @@ export function WorkspaceShell() {
   });
   const sessionProfileId = projection.profile ?? profileId;
   const sessionFrozen = projection.profile !== undefined;
+  const veilReady = projectReadiness.status === "ready";
   const profile = useMemo(
     () =>
       LOOM_PROFILE_DESCRIPTORS.find((descriptor) => descriptor.id === sessionProfileId) ??
@@ -100,6 +107,7 @@ export function WorkspaceShell() {
             Raw Pi keeps every result exploratory. Veil adds a separate verification path; it never
             retroactively certifies a Raw result.
           </p>
+          <VeilReadiness state={projectReadiness} />
         </div>
         <div className="inline-flex rounded-xl border border-[var(--border)] bg-black/20 p-1">
           {LOOM_PROFILE_DESCRIPTORS.map((descriptor) => (
@@ -109,10 +117,19 @@ export function WorkspaceShell() {
                 sessionProfileId === descriptor.id
                   ? "bg-slate-100 text-slate-950"
                   : "text-[var(--muted)] hover:text-white"
-              } ${sessionFrozen ? "cursor-not-allowed opacity-60" : ""}`}
-              disabled={sessionFrozen}
+              } ${
+                sessionFrozen || (descriptor.id === "veil" && !veilReady)
+                  ? "cursor-not-allowed opacity-60"
+                  : ""
+              }`}
+              disabled={sessionFrozen || (descriptor.id === "veil" && !veilReady)}
               key={descriptor.id}
               onClick={() => setProfileId(descriptor.id)}
+              title={
+                descriptor.id === "veil" && !veilReady
+                  ? "Veil requires a ready project reported by the local daemon"
+                  : undefined
+              }
               type="button"
             >
               {descriptor.label}
@@ -238,6 +255,33 @@ export function WorkspaceShell() {
       </section>
     </main>
   );
+}
+
+function VeilReadiness({ state }: Readonly<{ state: ProjectReadinessState }>) {
+  if (state.status === "ready") {
+    const project = state.readiness.project;
+    if (project === undefined) return null;
+    return (
+      <p className="mt-2 text-xs text-[var(--accent)]">
+        Veil {state.readiness.runtime.installedVersion} ready · {project.datasetCount}{" "}
+        {project.datasetCount === 1 ? "dataset" : "datasets"} · {project.runtimeCount}{" "}
+        {project.runtimeCount === 1 ? "runtime" : "runtimes"}. Verification actions come next.
+      </p>
+    );
+  }
+  if (state.status === "invalid" || state.status === "unavailable") {
+    return (
+      <p className="mt-2 text-xs text-[var(--warning)]">
+        Veil is not ready: {state.readiness.issue?.message ?? "check the project setup."}
+      </p>
+    );
+  }
+  const message = {
+    disabled: "Run the local daemon to check Veil project readiness.",
+    loading: "Checking Veil project readiness…",
+    failed: state.status === "failed" ? state.message : "Project readiness could not load.",
+  }[state.status];
+  return <p className="mt-2 text-xs text-[var(--muted)]">{message}</p>;
 }
 
 function ConnectionBadge({ connection }: Readonly<{ connection: BrowserConnectionState }>) {

@@ -34,6 +34,8 @@
     "vitest": "4.1.10"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "@google/genai@1.52.0": false,
+    "esbuild@0.28.2": true,
+    "protobufjs@7.6.5": false
   }
 }

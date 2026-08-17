@@ -16,10 +16,11 @@
     "@earendil-works/pi-coding-agent": "0.84.2",
     "@hono/node-server": "2.1.1",
     "@veilquant/loom-protocol": "0.0.0",
-    "hono": "4.13.2"
+    "hono": "4.13.2",
+    "tsx": "4.23.12",
+    "veil-quant": "0.1.0"
   },
   "devDependencies": {
-    "cross-env": "10.1.0",
-    "tsx": "4.23.12"
+    "cross-env": "10.1.0"
   }
 }

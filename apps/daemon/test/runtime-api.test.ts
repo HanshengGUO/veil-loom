@@ -1,10 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   isLoomAcceptedCommandResponse,
   isLoomBacktestView,
   isLoomBlobRecord,
+  isLoomProjectReadinessResponse,
   isLoomPublishedViewDescriptor,
   isLoomSelectionCreatedPayload,
   type LoomAcceptedCommandResponse,
@@ -15,9 +17,11 @@ import { Check } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLoomApp } from "../src/app.js";
 import { SessionEventStoreRegistry } from "../src/event-store.js";
+import { LoomProjectRegistry } from "../src/project-readiness.js";
 import { createDefaultRuntimeHost, type LoomRuntimeHost } from "../src/runtime-host.js";
 
 const TEST_ORIGIN = "http://127.0.0.1:3000";
+const EXAMPLE_ROOT = fileURLToPath(new URL("../../../examples/daily-factor/", import.meta.url));
 
 describe("Raw Pi command API", () => {
   let stateRoot: string;
@@ -179,7 +183,37 @@ describe("Raw Pi command API", () => {
     expect(await wrongSession.json()).toMatchObject({ code: "VIEW_NOT_FOUND" });
   });
 
-  it("rejects malformed commands and an unavailable Veil profile without leaking internals", async () => {
+  it("reports authenticated project readiness without exposing project internals", async () => {
+    const projects = new LoomProjectRegistry({
+      registrations: [{ projectId: "project-a", root: EXAMPLE_ROOT }],
+    });
+    runtimeHost = createDefaultRuntimeHost({
+      eventStores,
+      cwd: EXAMPLE_ROOT,
+      agentDir: join(stateRoot, "pi"),
+      projects,
+    });
+    app = createLoomApp({ eventStores, runtimeHost });
+    headers = await authorizedHeaders(app);
+
+    const response = await app.request("/v0/projects/project-a", { headers });
+    const body: unknown = await response.json();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(isLoomProjectReadinessResponse(body)).toBe(true);
+    expect(body).toMatchObject({
+      projectId: "project-a",
+      status: "ready",
+      runtime: { installedVersion: "0.1.0" },
+      project: { datasetCount: 1, runtimeCount: 1 },
+    });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain(EXAMPLE_ROOT);
+    expect(serialized).not.toContain("daily-factor-prices");
+    expect(serialized).not.toContain("veil-prices.csv");
+  });
+
+  it("rejects malformed commands and a non-ready Veil profile without leaking internals", async () => {
     const invalid = await command("/v0/projects/project-a/sessions", {
       format: "loom.session.create.v0",
       profile: "raw-pi",
@@ -202,8 +236,9 @@ describe("Raw Pi command API", () => {
       profile: "veil",
     });
     expect(unavailable.response.status).toBe(409);
-    expect(unavailable.body).toMatchObject({ code: "PROFILE_UNAVAILABLE" });
+    expect(unavailable.body).toMatchObject({ code: "PROJECT_NOT_READY" });
     expect(JSON.stringify(unavailable.body)).not.toContain(stateRoot);
+    await expect(eventStores.discover()).resolves.toEqual([]);
 
     const missing = await command("/v0/sessions/missing/messages?projectId=project-a", {
       format: "loom.message.send.v0",

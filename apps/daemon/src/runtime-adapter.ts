@@ -5,7 +5,9 @@ import {
   type LoomPiRuntimeDescriptor,
   type LoomProfileDescriptor,
   type LoomSelection,
+  type LoomSessionProfile,
   RAW_PI_PROFILE,
+  VEIL_PROFILE,
 } from "@veilquant/loom-protocol";
 import type { SessionEventStore, SessionEventStoreRegistry } from "./event-store.js";
 import type { HostedPiSession, PiSessionFactory } from "./pi/deterministic-session.js";
@@ -13,10 +15,12 @@ import {
   LOOM_REFERENCE_BACKTEST_TOOL_NAME,
   publishedViewFromToolResult,
 } from "./pi/loom-extension.js";
+import { LoomProjectRegistry, type VeilProjectContext } from "./project-readiness.js";
 import type { SessionRecoveryPlan } from "./session-recovery.js";
 
 export type RuntimeAdapterErrorCode =
   | "PROFILE_UNAVAILABLE"
+  | "PROJECT_NOT_READY"
   | "SESSION_NOT_FOUND"
   | "SESSION_BUSY"
   | "SESSION_CONFLICT"
@@ -37,7 +41,7 @@ export class RuntimeAdapterError extends Error {
 export interface RuntimeSession {
   projectId: string;
   sessionId: string;
-  profile: "raw-pi";
+  profile: LoomSessionProfile;
   runtime: LoomPiRuntimeDescriptor;
 }
 
@@ -102,29 +106,32 @@ interface ActiveTask {
   runPromise: Promise<void>;
 }
 
-export interface RawPiRuntimeAdapterOptions {
+export interface PiRuntimeAdapterOptions {
   eventStores: SessionEventStoreRegistry;
   sessionFactory: PiSessionFactory;
   cwd: string;
   agentDir: string;
+  descriptor: LoomProfileDescriptor;
+  projects?: LoomProjectRegistry;
 }
 
 /** Owns real Pi AgentSession instances and projects their public lifecycle into durable Loom events. */
-export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
-  readonly descriptor = RAW_PI_PROFILE;
+export class PiRuntimeAdapter implements LoomRuntimeAdapter {
+  readonly descriptor: LoomProfileDescriptor;
 
   readonly #eventStores: SessionEventStoreRegistry;
   readonly #sessionFactory: PiSessionFactory;
-  readonly #cwd: string;
   readonly #agentDir: string;
+  readonly #projects: LoomProjectRegistry;
   readonly #sessions = new Map<string, RuntimeState>();
   readonly #starting = new Set<string>();
 
-  constructor(options: RawPiRuntimeAdapterOptions) {
+  constructor(options: PiRuntimeAdapterOptions) {
+    this.descriptor = options.descriptor;
     this.#eventStores = options.eventStores;
     this.#sessionFactory = options.sessionFactory;
-    this.#cwd = options.cwd;
     this.#agentDir = options.agentDir;
+    this.#projects = options.projects ?? new LoomProjectRegistry({ fallbackRoot: options.cwd });
   }
 
   async start(input: StartSessionInput): Promise<RuntimeSession> {
@@ -135,6 +142,7 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
     this.#starting.add(key);
 
     try {
+      const project = await this.#project(input.projectId);
       const store = await this.#eventStores.get(input.projectId, input.sessionId);
       if ((await store.replay()).length > 0) {
         throw new RuntimeAdapterError(
@@ -145,15 +153,15 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
       await store.append({
         type: "session.created",
         payload: {
-          profile: "raw-pi",
-          title: input.title ?? "Raw Pi exploration",
+          profile: this.descriptor.id,
+          title: input.title ?? `${this.descriptor.label} exploration`,
           commandId: input.commandId,
           assurance: {
             format: "loom.assurance.v0",
             state: "exploratory",
             issuer: "loom",
             evidenceRefs: [],
-            limitations: ["This session has not been independently verified by Veil."],
+            limitations: [profileLimitation(this.descriptor.id)],
           },
         },
       });
@@ -167,8 +175,12 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
         pi = await this.#sessionFactory.create({
           projectId: input.projectId,
           sessionId: input.sessionId,
-          cwd: this.#cwd,
+          profile: this.descriptor.id,
+          cwd: project.root,
           agentDir: this.#agentDir,
+          ...(project.veil === undefined
+            ? {}
+            : { veil: { api: project.veil.veil, project: project.veil.project } }),
         });
         if (!isLoomPiRuntimeDescriptor(pi.descriptor)) {
           pi.dispose();
@@ -194,7 +206,7 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
       try {
         await store.append({
           type: "session.ready",
-          payload: { profile: "raw-pi", runtime: pi.descriptor },
+          payload: { profile: this.descriptor.id, runtime: pi.descriptor },
         });
       } catch (error) {
         pi.dispose();
@@ -204,7 +216,7 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
       const state: RuntimeState = {
         projectId: input.projectId,
         sessionId: input.sessionId,
-        profile: "raw-pi",
+        profile: this.descriptor.id,
         runtime: pi.descriptor,
         store,
         pi,
@@ -219,10 +231,10 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
   }
 
   async recover(input: SessionRecoveryPlan): Promise<RuntimeSession | undefined> {
-    if (input.profile !== "raw-pi") {
+    if (input.profile !== this.descriptor.id) {
       throw new RuntimeAdapterError(
         "PROFILE_UNAVAILABLE",
-        "The durable session does not belong to the Raw Pi adapter",
+        "The durable session does not belong to this Pi adapter",
       );
     }
     if (input.disposition === "closed" || input.disposition === "failed") return undefined;
@@ -262,13 +274,32 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
         return undefined;
       }
 
+      let project: RuntimeProjectContext;
+      try {
+        project = await this.#project(input.projectId);
+      } catch (error) {
+        await store.append({
+          type: "session.status_changed",
+          payload: {
+            status: "failed",
+            code: "PROJECT_NOT_READY",
+            remedy: "Restore the registered project and its Veil configuration before retrying.",
+          },
+        });
+        throw error;
+      }
+
       let pi: HostedPiSession;
       try {
         pi = await this.#sessionFactory.create({
           projectId: input.projectId,
           sessionId: input.sessionId,
-          cwd: this.#cwd,
+          profile: this.descriptor.id,
+          cwd: project.root,
           agentDir: this.#agentDir,
+          ...(project.veil === undefined
+            ? {}
+            : { veil: { api: project.veil.veil, project: project.veil.project } }),
           recovery: {
             ...(input.publicContext === undefined ? {} : { publicContext: input.publicContext }),
             interruptedTaskIds: input.interruptedTaskIds,
@@ -311,7 +342,7 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
       const state: RuntimeState = {
         projectId: input.projectId,
         sessionId: input.sessionId,
-        profile: "raw-pi",
+        profile: this.descriptor.id,
         runtime: pi.descriptor,
         store,
         pi,
@@ -368,7 +399,7 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
           taskId: input.taskId,
           commandId: input.commandId,
           kind: "pi-prompt",
-          label: "Run Raw Pi request",
+          label: `Run ${this.descriptor.label} request`,
         },
       });
     } catch (error) {
@@ -433,6 +464,22 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
     const state = this.#requireSession(projectId, sessionId);
     const task = state.activeTask;
     if (task !== undefined) await task.runPromise;
+  }
+
+  async #project(projectId: string): Promise<RuntimeProjectContext> {
+    try {
+      if (this.descriptor.id === "veil") {
+        const veil = await this.#projects.requireVeilProject(projectId);
+        return { root: veil.root, veil };
+      }
+      return { root: await this.#projects.root(projectId) };
+    } catch (error) {
+      throw new RuntimeAdapterError(
+        "PROJECT_NOT_READY",
+        "The project is not ready for this runtime profile",
+        { cause: error },
+      );
+    }
   }
 
   #requireSession(projectId: string, sessionId: string): RuntimeState {
@@ -602,6 +649,25 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
   }
 }
 
+interface RuntimeProjectContext {
+  root: string;
+  veil?: VeilProjectContext;
+}
+
+export type RawPiRuntimeAdapterOptions = Omit<PiRuntimeAdapterOptions, "descriptor">;
+
+export class RawPiRuntimeAdapter extends PiRuntimeAdapter {
+  constructor(options: RawPiRuntimeAdapterOptions) {
+    super({ ...options, descriptor: RAW_PI_PROFILE });
+  }
+}
+
+export class VeilPiRuntimeAdapter extends PiRuntimeAdapter {
+  constructor(options: RawPiRuntimeAdapterOptions) {
+    super({ ...options, descriptor: VEIL_PROFILE });
+  }
+}
+
 /** Adds bounded daemon-owned selection context without exposing the underlying series. */
 export function buildPiPrompt(content: string, selection: LoomSelection | undefined): string {
   if (selection === undefined) return content;
@@ -651,6 +717,12 @@ function publicSession(state: RuntimeState): RuntimeSession {
 
 function runtimeKey(projectId: string, sessionId: string): string {
   return `${projectId}\0${sessionId}`;
+}
+
+function profileLimitation(profile: LoomSessionProfile): string {
+  return profile === "raw-pi"
+    ? "This session has not been independently verified by Veil."
+    : "Veil capability is loaded, but no result is verified until Veil issues independent evidence.";
 }
 
 function sameRuntimeDescriptor(

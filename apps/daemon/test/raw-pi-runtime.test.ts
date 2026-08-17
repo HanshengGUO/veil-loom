@@ -5,6 +5,7 @@ import type { LoomEventEnvelope, LoomSelection } from "@veilquant/loom-protocol"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionEventStoreRegistry } from "../src/event-store.js";
 import { publishedViewFromToolResult } from "../src/pi/loom-extension.js";
+import { LoomProjectRegistry } from "../src/project-readiness.js";
 import {
   buildPiPrompt,
   RawPiRuntimeAdapter,
@@ -211,7 +212,11 @@ describe("Raw Pi runtime adapter", () => {
         },
       },
     });
-    const host = new LoomRuntimeHost({ adapters: [adapter], eventStores });
+    const host = new LoomRuntimeHost({
+      adapters: [adapter],
+      eventStores,
+      projects: new LoomProjectRegistry({ fallbackRoot: stateRoot }),
+    });
 
     await expect(
       host.createSession(

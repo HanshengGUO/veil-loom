@@ -1,0 +1,22 @@
+format: veil.project.v0
+datasets:
+  - dataset: daily-factor-prices
+    adapter: adapter.yaml
+    root: .
+    root_env: null
+runtimes:
+  - id: veil-node
+    constraints:
+      - ">=20.10.0,<30"
+promotion_concurrency: 2
+stage4:
+  cost_models:
+    - kind: linear-bps
+      reference: daily-factor-10bps
+      basis_points: 10
+  null_generators:
+    - kind: centered-block-bootstrap
+      reference: daily-factor-centered-blocks
+      replications: 64
+      block_length: 3
+      seed: 20260818
