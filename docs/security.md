@@ -50,7 +50,15 @@ codes and do not return storage paths or private filesystem diagnostics.
 Pi's event stream is an internal input, not a public passthrough. Loom publishes visible assistant
 text and coarse lifecycle facts, but drops thinking blocks, tool arguments, tool result bodies, and
 provider error messages. The committed CI/development provider is Pi's in-memory faux provider with
-network refresh disabled; its sole Loom fixture tool has no filesystem, shell, or network access.
+network refresh disabled; its sole Loom reference tool has no filesystem, shell, or network access.
+
+The reference tool does not treat arbitrary model or tool JSON as chart data. It invokes one
+explicit adapter, which validates the complete import and size limits before any resource is made
+visible. Only the resulting view descriptor enters the session log. Series live in immutable
+content-addressed records, and reads require the descriptor's project, session, view, and blob
+association. The browser validates each record again before rendering it. The committed market
+fixture is intentionally public; private project data remains outside the browser until a separately
+authorized bounded-view design exists.
 
 ## Non-goals
 

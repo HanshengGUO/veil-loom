@@ -17,14 +17,18 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { LoomPiRuntimeDescriptor } from "@veilquant/loom-protocol";
-import { createLoomFixtureExtension, LOOM_FIXTURE_TOOL_NAME } from "./loom-extension.js";
+import type { DailyFactorReferenceAdapter } from "../reference-backtest/reference-adapter.js";
+import {
+  createLoomReferenceBacktestExtension,
+  LOOM_REFERENCE_BACKTEST_TOOL_NAME,
+} from "./loom-extension.js";
 
 export const LOOM_FIXTURE_PROVIDER = "loom-offline-fixture";
 export const LOOM_FIXTURE_MODEL = "loom-fixture-v0";
 export const LOOM_FIXTURE_PREAMBLE =
-  "I’ll inspect the committed daily-factor fixture through Loom’s Pi extension.";
+  "I’ll run the committed daily-factor reference backtest through Loom’s Pi extension.";
 export const LOOM_FIXTURE_FINAL =
-  "The offline Raw Pi fixture completed its inspection. This result is exploratory and unverified.";
+  "The offline Raw Pi fixture published the reference view. It remains exploratory and unverified.";
 
 export interface PiPromptFixture {
   taskId: string;
@@ -38,6 +42,8 @@ export interface HostedPiSession {
 }
 
 export interface PiSessionFactoryInput {
+  projectId: string;
+  sessionId: string;
   cwd: string;
   agentDir: string;
 }
@@ -53,11 +59,20 @@ export interface DeterministicPiSessionFactoryOptions {
   outcome?: "success" | "error";
 }
 
+export interface DeterministicPiSessionFactoryDependencies {
+  referenceBacktests: DailyFactorReferenceAdapter;
+}
+
 /** Uses Pi's official faux provider while exercising the real AgentSession and extension runtime. */
 export class DeterministicPiSessionFactory implements PiSessionFactory {
+  readonly #dependencies: DeterministicPiSessionFactoryDependencies;
   readonly #options: DeterministicPiSessionFactoryOptions;
 
-  constructor(options: DeterministicPiSessionFactoryOptions = {}) {
+  constructor(
+    dependencies: DeterministicPiSessionFactoryDependencies,
+    options: DeterministicPiSessionFactoryOptions = {},
+  ) {
+    this.#dependencies = dependencies;
     this.#options = options;
   }
 
@@ -87,11 +102,23 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       },
       { projectTrusted: false },
     );
+    let taskId: string | undefined;
     const resourceLoader = new DefaultResourceLoader({
       cwd: input.cwd,
       agentDir: input.agentDir,
       settingsManager,
-      extensionFactories: [createLoomFixtureExtension()],
+      extensionFactories: [
+        createLoomReferenceBacktestExtension({
+          publish: async () => {
+            if (taskId === undefined) throw new Error("The Loom task context is unavailable");
+            return this.#dependencies.referenceBacktests.publishCommitted({
+              projectId: input.projectId,
+              sessionId: input.sessionId,
+              taskId,
+            });
+          },
+        }),
+      ],
       noExtensions: true,
       noSkills: true,
       noPromptTemplates: true,
@@ -112,7 +139,7 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
       model: faux.getModel(),
       modelRuntime,
       thinkingLevel: "off",
-      tools: [LOOM_FIXTURE_TOOL_NAME],
+      tools: [LOOM_REFERENCE_BACKTEST_TOOL_NAME],
       resourceLoader,
       sessionManager: SessionManager.inMemory(input.cwd),
       settingsManager,
@@ -132,7 +159,8 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
     return {
       descriptor,
       session,
-      preparePrompt: ({ taskId }) => {
+      preparePrompt: (fixture) => {
+        taskId = fixture.taskId;
         if (this.#options.outcome === "error") {
           faux.setResponses([
             fauxAssistantMessage([], {
@@ -148,9 +176,9 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
               fauxThinking("This deterministic thought must never enter Loom's public event log."),
               fauxText(this.#options.preamble ?? LOOM_FIXTURE_PREAMBLE),
               fauxToolCall(
-                LOOM_FIXTURE_TOOL_NAME,
+                LOOM_REFERENCE_BACKTEST_TOOL_NAME,
                 { target: "daily-factor" },
-                { id: `${taskId}-tool-1` },
+                { id: `${fixture.taskId}-tool-1` },
               ),
             ],
             { stopReason: "toolUse" },

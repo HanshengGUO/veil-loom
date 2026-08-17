@@ -8,7 +8,10 @@ import {
 } from "@veilquant/loom-protocol";
 import type { SessionEventStore, SessionEventStoreRegistry } from "./event-store.js";
 import type { HostedPiSession, PiSessionFactory } from "./pi/deterministic-session.js";
-import { LOOM_FIXTURE_TOOL_NAME } from "./pi/loom-extension.js";
+import {
+  LOOM_REFERENCE_BACKTEST_TOOL_NAME,
+  publishedViewFromToolResult,
+} from "./pi/loom-extension.js";
 
 export type RuntimeAdapterErrorCode =
   | "PROFILE_UNAVAILABLE"
@@ -157,7 +160,12 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
 
       let pi: HostedPiSession;
       try {
-        pi = await this.#sessionFactory.create({ cwd: this.#cwd, agentDir: this.#agentDir });
+        pi = await this.#sessionFactory.create({
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          cwd: this.#cwd,
+          agentDir: this.#agentDir,
+        });
         if (!isLoomPiRuntimeDescriptor(pi.descriptor)) {
           pi.dispose();
           throw new Error("The Pi runtime descriptor is invalid");
@@ -459,6 +467,17 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
             : `${publicToolLabel(event.toolName)} complete`,
         },
       });
+      if (event.isError) {
+        task.sawError = true;
+        return;
+      }
+      if (event.toolName === LOOM_REFERENCE_BACKTEST_TOOL_NAME && !task.cancelRequested) {
+        const view = publishedViewFromToolResult(event.result);
+        if (view === undefined || view.taskId !== task.id) {
+          throw new Error("The reference backtest tool returned an invalid view descriptor");
+        }
+        await store.append({ type: "view.published", payload: view });
+      }
     }
   }
 }
@@ -525,5 +544,5 @@ function visibleAssistantText(content: readonly unknown[]): string {
 }
 
 function publicToolLabel(toolName: string): string {
-  return toolName === LOOM_FIXTURE_TOOL_NAME ? "Inspect deterministic fixture" : "Pi tool";
+  return toolName === LOOM_REFERENCE_BACKTEST_TOOL_NAME ? "Run reference backtest" : "Pi tool";
 }

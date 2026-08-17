@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { LoomEventEnvelope } from "@veilquant/loom-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionEventStoreRegistry } from "../src/event-store.js";
+import { publishedViewFromToolResult } from "../src/pi/loom-extension.js";
 import { RawPiRuntimeAdapter, type RuntimeAdapterError } from "../src/runtime-adapter.js";
 import { createDefaultRuntimeHost, LoomRuntimeHost } from "../src/runtime-host.js";
 
@@ -75,13 +76,21 @@ describe("Raw Pi runtime adapter", () => {
     );
     expect(events.filter((event) => event.type === "tool.started")).toHaveLength(1);
     expect(events.filter((event) => event.type === "tool.completed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "view.published")).toHaveLength(1);
+    expect(events.findIndex((event) => event.type === "tool.completed")).toBeLessThan(
+      events.findIndex((event) => event.type === "view.published"),
+    );
+    expect(events.findIndex((event) => event.type === "view.published")).toBeLessThan(
+      events.findIndex((event) => event.type === "task.completed"),
+    );
     expect(events).toContainEqual(
       expect.objectContaining({ type: "task.completed", payload: { taskId: "task-1" } }),
     );
     expect(assistantDeltasMatch(events)).toBe(true);
     expect(JSON.stringify(events)).not.toContain("deterministic thought");
     expect(JSON.stringify(events)).not.toContain("arguments");
-    expect(JSON.stringify(events)).not.toContain("available for an exploratory run");
+    expect(JSON.stringify(events)).not.toContain("committed daily-factor reference view is ready");
+    expect(JSON.stringify(events)).not.toContain("1704153600000");
   });
 
   it("cancels a paced provider through Pi's AbortSignal without reporting completion", async () => {
@@ -175,6 +184,20 @@ describe("Raw Pi runtime adapter", () => {
     });
     expect(JSON.stringify(events)).not.toContain(stateRoot);
     expect(JSON.stringify(events)).not.toContain("credential.json");
+  });
+
+  it("does not promote an arbitrary tool result into a published view", () => {
+    expect(
+      publishedViewFromToolResult({
+        details: {
+          view: {
+            viewId: `view_${"a".repeat(64)}`,
+            kind: "backtest",
+            assurance: { state: "accepted" },
+          },
+        },
+      }),
+    ).toBeUndefined();
   });
 
   async function session(fixture?: Parameters<typeof createDefaultRuntimeHost>[0]["fixture"]) {

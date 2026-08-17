@@ -7,12 +7,14 @@ import {
   RAW_PI_PROFILE,
 } from "@veilquant/loom-protocol";
 import { useMemo, useState } from "react";
+import { type BacktestViewState, useBacktestView } from "../hooks/use-backtest-view";
 import {
   type BrowserConnectionState,
   useSessionEventStream,
 } from "../hooks/use-session-event-stream";
 import { resolveDaemonOrigin } from "../lib/daemon-auth";
 import type { ConversationEntry, TaskProjection } from "../lib/session-projection";
+import { BacktestCanvas } from "./backtest-canvas";
 
 const DEMO_PROJECT_ID = "daily-factor-demo";
 const DEMO_SESSION_ID = "raw-pi-demo";
@@ -39,6 +41,13 @@ export function WorkspaceShell() {
     daemonOrigin: DAEMON_ORIGIN,
     projectId: DEMO_PROJECT_ID,
     sessionId: DEMO_SESSION_ID,
+  });
+  const backtestView = useBacktestView({
+    enabled: DEMO_STREAM_ENABLED,
+    daemonOrigin: DAEMON_ORIGIN,
+    projectId: DEMO_PROJECT_ID,
+    sessionId: DEMO_SESSION_ID,
+    descriptor: projection.activeView,
   });
   const sessionProfileId = projection.profile ?? profileId;
   const sessionFrozen = projection.profile !== undefined;
@@ -205,24 +214,7 @@ export function WorkspaceShell() {
             </span>
           </div>
 
-          <div className="grid flex-1 gap-4 p-5 xl:grid-rows-[1.3fr_0.9fr_auto]">
-            <ChartPlaceholder
-              active={projection.activeView !== undefined}
-              label="Market and trades"
-              variant="market"
-            />
-            <ChartPlaceholder
-              active={projection.activeView !== undefined}
-              label="Equity and drawdown"
-              variant="equity"
-            />
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              <MetricPlaceholder label="Assurance" value="Exploratory" />
-              <MetricPlaceholder label="Evidence" value="None" />
-              <MetricPlaceholder label="Selection" value="No range" />
-            </div>
-          </div>
+          <CanvasContent state={backtestView} />
 
           <div className="border-t border-[var(--border)] px-5 py-3">
             <p
@@ -311,59 +303,19 @@ function streamDescription(connection: BrowserConnectionState, issue: string | u
   return "Opening the deterministic offline Pi event stream…";
 }
 
-function ChartPlaceholder({
-  active,
-  label,
-  variant,
-}: Readonly<{ active: boolean; label: string; variant: "market" | "equity" }>) {
-  const bars = variant === "market" ? [32, 48, 40, 68, 52, 76, 60, 45, 70, 58, 82, 64] : [];
-
+function CanvasContent({ state }: Readonly<{ state: BacktestViewState }>) {
+  if (state.status === "ready") return <BacktestCanvas resources={state.resources} />;
+  const message = {
+    waiting: "Waiting for a validated backtest view…",
+    loading: "Loading content-addressed chart resources…",
+    failed: state.status === "failed" ? state.message : "The view could not load.",
+  }[state.status];
   return (
-    <section className="relative min-h-48 overflow-hidden rounded-xl border border-[var(--border)] bg-black/15 p-4">
-      <div className="mb-5 flex items-center justify-between">
-        <h2 className="text-xs font-semibold text-slate-300">{label}</h2>
-        <span className="text-[10px] uppercase tracking-widest text-slate-600">
-          {active ? "demo fixture" : "waiting for view"}
-        </span>
+    <div className="grid flex-1 place-items-center p-5">
+      <div className="max-w-md rounded-xl border border-dashed border-[var(--border)] p-6 text-center">
+        <p className="text-sm font-semibold text-slate-300">Backtest canvas</p>
+        <p className="mt-2 text-xs leading-5 text-[var(--muted)]">{message}</p>
       </div>
-      <div className="absolute inset-x-4 bottom-5 top-14 flex items-end gap-2 border-b border-l border-slate-700/70 px-3 pt-3">
-        {variant === "market" ? (
-          bars.map((height) => (
-            <div
-              className="flex-1 rounded-t-sm bg-gradient-to-t from-lime-300/15 to-lime-200/55"
-              key={height}
-              style={{ height: `${height}%` }}
-            />
-          ))
-        ) : (
-          <svg
-            aria-label="Placeholder equity curve"
-            className="size-full"
-            role="img"
-            viewBox="0 0 600 180"
-          >
-            <title>Placeholder equity curve</title>
-            <path
-              d="M0 145 C55 132, 80 148, 120 118 S190 92, 225 108 S290 120, 330 72 S410 85, 455 42 S535 58, 600 24"
-              fill="none"
-              opacity="0.65"
-              stroke="var(--accent)"
-              strokeWidth="3"
-            />
-          </svg>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function MetricPlaceholder({ label, value }: Readonly<{ label: string; value: string }>) {
-  return (
-    <div className="rounded-xl border border-[var(--border)] bg-black/15 p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-        {label}
-      </p>
-      <p className="mt-2 text-sm font-medium text-slate-300">{value}</p>
     </div>
   );
 }

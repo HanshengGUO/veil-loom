@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isLoomPublishedViewDescriptor } from "@veilquant/loom-protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEMO_PROJECT_ID,
@@ -9,6 +10,8 @@ import {
   seedDemoSession,
 } from "../src/demo-session.js";
 import { SessionEventStoreRegistry } from "../src/event-store.js";
+import { DAILY_FACTOR_EXPECTED_IDENTITIES } from "../src/reference-backtest/daily-factor-fixture.js";
+import { ResearchArtifactStore } from "../src/research-artifacts.js";
 import { createDefaultRuntimeHost } from "../src/runtime-host.js";
 
 describe("deterministic Pi demo session", () => {
@@ -45,14 +48,27 @@ describe("deterministic Pi demo session", () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "tool.completed",
-        payload: expect.objectContaining({ toolName: "loom_fixture_inspect" }),
+        payload: expect.objectContaining({ toolName: "loom_reference_backtest" }),
       }),
     );
     expect(events).toContainEqual(
       expect.objectContaining({ type: "task.completed", payload: { taskId: DEMO_TASK_ID } }),
     );
     expect(JSON.stringify(events)).not.toContain("deterministic thought");
-    expect(events.some((event) => event.type === "view.published")).toBe(false);
+    const published = events.find(
+      (event) => event.type === "view.published" && isLoomPublishedViewDescriptor(event.payload),
+    );
+    expect(published).toBeDefined();
+    if (published === undefined || !isLoomPublishedViewDescriptor(published.payload)) {
+      throw new Error("Expected a published view descriptor");
+    }
+    expect(published.payload.viewId).toBe(DAILY_FACTOR_EXPECTED_IDENTITIES.view);
+    const view = await new ResearchArtifactStore({ stateRoot }).readView({
+      projectId: DEMO_PROJECT_ID,
+      sessionId: DEMO_SESSION_ID,
+      viewId: published.payload.viewId,
+    });
+    expect(view).toMatchObject({ assurance: { state: "exploratory" } });
   });
 
   it("validates and replays the fixture across daemon restarts", async () => {

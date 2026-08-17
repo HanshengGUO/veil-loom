@@ -1,7 +1,9 @@
 import {
   isLoomPiRuntimeDescriptor,
+  isLoomPublishedViewDescriptor,
   type LoomEventEnvelope,
   type LoomPiRuntimeDescriptor,
+  type LoomPublishedViewDescriptor,
   type LoomSessionProfile,
 } from "@veilquant/loom-protocol";
 
@@ -20,11 +22,7 @@ export interface TaskProjection {
   sequence: number;
 }
 
-export interface ViewProjection {
-  id: string;
-  kind: string;
-  title: string;
-  summary?: string;
+export interface ViewProjection extends LoomPublishedViewDescriptor {
   sequence: number;
 }
 
@@ -219,24 +217,23 @@ export function applySessionEvent(
       next = updateTask(next, event, "failed");
       break;
     case "view.published": {
-      const viewId = stringField(event.payload.viewId);
-      if (viewId !== undefined) {
-        const summary = stringField(event.payload.summary);
-        next = {
-          ...next,
-          activeView: {
-            id: viewId,
-            kind: stringField(event.payload.kind) ?? "research",
-            title: stringField(event.payload.title) ?? "Research view",
-            ...(summary === undefined ? {} : { summary }),
-            sequence: event.sequence,
-          },
-        };
+      if (!isLoomPublishedViewDescriptor(event.payload)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The stream returned an invalid published-view descriptor.",
+        });
       }
+      next = {
+        ...next,
+        activeView: {
+          ...event.payload,
+          sequence: event.sequence,
+        },
+      };
       break;
     }
     case "view.superseded":
-      if (stringField(event.payload.viewId) === next.activeView?.id) {
+      if (stringField(event.payload.viewId) === next.activeView?.viewId) {
         next = { ...next, activeView: undefined };
       }
       break;

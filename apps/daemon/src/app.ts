@@ -15,6 +15,11 @@ import {
 } from "@veilquant/loom-protocol";
 import { Hono } from "hono";
 import { SessionEventStoreError, SessionEventStoreRegistry } from "./event-store.js";
+import {
+  canonicalJson,
+  ResearchArtifactError,
+  ResearchArtifactStore,
+} from "./research-artifacts.js";
 import { RuntimeAdapterError } from "./runtime-adapter.js";
 import { createDefaultRuntimeHost, type LoomRuntimeHost } from "./runtime-host.js";
 import { DaemonSecurity } from "./security.js";
@@ -24,6 +29,7 @@ const DAEMON_VERSION = "0.0.0";
 
 export interface LoomAppOptions {
   eventStores?: SessionEventStoreRegistry;
+  artifacts?: ResearchArtifactStore;
   runtimeHost?: LoomRuntimeHost;
   security?: DaemonSecurity;
 }
@@ -32,10 +38,13 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
   const app = new Hono();
   const stateRoot = resolveLoomStateRoot();
   const eventStores = options.eventStores ?? new SessionEventStoreRegistry({ stateRoot });
+  const artifacts =
+    options.artifacts ?? new ResearchArtifactStore({ stateRoot: eventStores.stateRoot });
   const runtimeHost =
     options.runtimeHost ??
     createDefaultRuntimeHost({
       eventStores,
+      artifacts,
       cwd: process.cwd(),
       agentDir: join(stateRoot, "pi"),
     });
@@ -146,6 +155,38 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
       if (!isLoomCancelTaskRequest(request)) throw new RequestValidationError();
       const response = await runtimeHost.cancelTask({ projectId, sessionId, taskId });
       return context.json(response, 202);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.get("/v0/views/:viewId", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sessionId = requireSessionId(context.req.query("sessionId") ?? "");
+      const view = await artifacts.readView({
+        projectId,
+        sessionId,
+        viewId: context.req.param("viewId"),
+      });
+      return immutableJsonResponse(view, view.viewId);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.get("/v0/blobs/:blobId", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sessionId = requireSessionId(context.req.query("sessionId") ?? "");
+      const viewId = context.req.query("viewId") ?? "";
+      const blob = await artifacts.readBlobForView({
+        projectId,
+        sessionId,
+        viewId,
+        blobId: context.req.param("blobId"),
+      });
+      return immutableJsonResponse(blob, blob.blobId);
     } catch (error) {
       return eventErrorResponse(error);
     }
@@ -342,6 +383,18 @@ function encodeServerSentEvent(event: LoomEventEnvelope, encoder: TextEncoder): 
   );
 }
 
+function immutableJsonResponse(input: unknown, identity: string): Response {
+  return new Response(canonicalJson(input), {
+    status: 200,
+    headers: {
+      "Cache-Control": "private, max-age=31536000, immutable",
+      "Content-Type": "application/json; charset=utf-8",
+      ETag: `"${identity}"`,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 function eventErrorResponse(error: unknown): Response {
   let status = 500;
   let code: LoomErrorCode = "INTERNAL_ERROR";
@@ -366,6 +419,21 @@ function eventErrorResponse(error: unknown): Response {
         error.code === "PROFILE_UNAVAILABLE"
           ? "The requested profile is not available"
           : "The command conflicts with the current runtime state";
+    }
+  } else if (error instanceof ResearchArtifactError) {
+    if (error.code === "INVALID_ID") {
+      status = 400;
+      code = "INVALID_REQUEST";
+      message = "The resource request is invalid";
+    } else if (error.code === "VIEW_NOT_FOUND" || error.code === "BLOB_NOT_FOUND") {
+      status = 404;
+      code = error.code;
+      message =
+        error.code === "VIEW_NOT_FOUND" ? "The view was not found" : "The blob was not found";
+    } else {
+      status = 503;
+      code = "VIEW_UNAVAILABLE";
+      message = "The research view is unavailable";
     }
   } else if (error instanceof SessionEventStoreError) {
     if (error.code === "INVALID_ID" || error.code === "INVALID_CURSOR") {

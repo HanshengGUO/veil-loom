@@ -1,17 +1,24 @@
 import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import {
+  compareLoomTime,
   isLoomAcceptedCommandResponse,
   isLoomAssurance,
   isLoomAuthResponse,
+  isLoomBacktestImport,
+  isLoomBacktestView,
+  isLoomBlobRecord,
   isLoomCancelTaskRequest,
   isLoomCreateSessionRequest,
   isLoomEventEnvelope,
   isLoomPiRuntimeDescriptor,
   isLoomPortableId,
+  isLoomPublishedViewDescriptor,
   isLoomSendMessageRequest,
   LOOM_PROFILE_DESCRIPTORS,
   LoomAssuranceSchema,
+  type LoomBacktestImport,
+  type LoomBlobReference,
   LoomEventEnvelopeSchema,
   LoomProfileDescriptorSchema,
   RAW_PI_PROFILE,
@@ -204,3 +211,171 @@ describe("Loom assurance protocol", () => {
     expect(isLoomAssurance(forged)).toBe(false);
   });
 });
+
+describe("Loom backtest view protocol", () => {
+  it("validates a bounded import with bigint-safe ordered time and explicit metric semantics", () => {
+    const input = backtestImport();
+    expect(isLoomBacktestImport(input)).toBe(true);
+    expect(
+      compareLoomTime(
+        { epoch: "1700000000000", unit: "ms" },
+        { epoch: "1700000000000000000", unit: "ns" },
+      ),
+    ).toBe(0);
+
+    expect(
+      isLoomBacktestImport({
+        ...input,
+        equity: [input.equity[1], input.equity[0]],
+      }),
+    ).toBe(false);
+    expect(
+      isLoomBacktestImport({
+        ...input,
+        drawdown: [input.drawdown[0], { ...input.drawdown[1], value: Number.NaN }],
+      }),
+    ).toBe(false);
+    expect(
+      isLoomBacktestImport({
+        ...input,
+        trades: [{ ...input.trades[0], time: { epoch: "1700000000000000", unit: "us" } }],
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps blob records typed and view ownership/provenance explicit", () => {
+    const input = backtestImport();
+    const marketRecord = {
+      format: "loom.blob.v0",
+      blobId: `blob_${"a".repeat(64)}`,
+      createdAt: "2026-08-18T00:00:00.000Z",
+      content: {
+        format: "loom.series.v0",
+        kind: "ohlcv",
+        seriesKey: "market",
+        timeUnit: "ms",
+        points: input.market,
+      },
+    };
+    expect(isLoomBlobRecord(marketRecord)).toBe(true);
+    expect(isLoomBlobRecord({ ...marketRecord, secretPath: "/private/data.csv" })).toBe(false);
+
+    const assurance = {
+      format: "loom.assurance.v0",
+      state: "exploratory",
+      issuer: "loom",
+      evidenceRefs: [],
+      limitations: ["Not independently verified"],
+    } as const;
+    const view = {
+      format: "loom.backtest-view.v0",
+      viewId: `view_${"0".repeat(64)}`,
+      title: input.title,
+      summary: input.summary,
+      createdAt: "2026-08-18T00:00:00.000Z",
+      assurance,
+      timeRange: { start: input.market[0]?.time, end: input.market[1]?.time },
+      market: reference("a", "loom.series.v0", "ohlcv", "market", 2),
+      equity: reference("b", "loom.series.v0", "scalar", "equity", 2),
+      drawdown: reference("c", "loom.series.v0", "scalar", "drawdown", 2),
+      trades: reference("d", "loom.table.v0", "trades", "trades", 1),
+      metrics: input.metrics,
+      regions: input.regions,
+      provenance: {
+        format: "loom.view-provenance.v0",
+        projectId: "project-a",
+        sessionId: "session-a",
+        taskId: "task-a",
+        adapter: { id: "loom.reference.daily-factor", version: "0" },
+        source: input.source,
+        run: input.run,
+      },
+    };
+    expect(isLoomBacktestView(view)).toBe(true);
+
+    const descriptor = {
+      format: "loom.view-published.v0",
+      viewId: view.viewId,
+      viewFormat: view.format,
+      kind: "backtest",
+      title: view.title,
+      summary: view.summary,
+      taskId: "task-a",
+      assurance,
+    };
+    expect(isLoomPublishedViewDescriptor(descriptor)).toBe(true);
+    expect(
+      isLoomPublishedViewDescriptor({
+        ...descriptor,
+        assurance: { ...assurance, state: "accepted" },
+      }),
+    ).toBe(false);
+    expect(isLoomBacktestView({ ...view, viewId: `blob_${"0".repeat(64)}` })).toBe(false);
+  });
+});
+
+function backtestImport(): LoomBacktestImport {
+  const first = { epoch: "1700000000000", unit: "ms" } as const;
+  const second = { epoch: "1700086400000", unit: "ms" } as const;
+  return {
+    format: "loom.backtest-import.v0",
+    title: "Reference backtest",
+    summary: "Two ordered sessions with explicit net execution semantics.",
+    timeUnit: "ms",
+    market: [
+      { time: first, open: 100, high: 102, low: 99, close: 101, volume: 1_000 },
+      { time: second, open: 101, high: 103, low: 100, close: 102, volume: 1_200 },
+    ],
+    equity: [
+      { time: first, value: 100_000 },
+      { time: second, value: 101_000 },
+    ],
+    drawdown: [
+      { time: first, value: 0 },
+      { time: second, value: 0 },
+    ],
+    trades: [{ tradeId: "trade-1", time: second, side: "buy", price: 101, quantity: 10 }],
+    metrics: [
+      {
+        key: "total_return",
+        label: "Total return",
+        value: 0.01,
+        unit: "ratio",
+        scale: "percent",
+        sampleScope: "full-sample",
+        method: { id: "endpoint-v0", description: "Endpoint return on net equity." },
+      },
+    ],
+    regions: [],
+    source: {
+      dataId: "fixture-data",
+      dataDigest: `sha256:${"1".repeat(64)}`,
+      artifactId: "fixture-artifact",
+      artifactDigest: `sha256:${"2".repeat(64)}`,
+    },
+    run: {
+      protocolId: "next-session-open-v0",
+      signalLagSessions: 1,
+      executionPrice: "open",
+      equityBasis: "net",
+      costModel: "10 bps round trip",
+    },
+  };
+}
+
+function reference(
+  digestCharacter: string,
+  contentFormat: LoomBlobReference["contentFormat"],
+  kind: LoomBlobReference["kind"],
+  key: LoomBlobReference["key"],
+  itemCount: number,
+): LoomBlobReference {
+  return {
+    blobId: `blob_${digestCharacter.repeat(64)}`,
+    contentFormat,
+    kind,
+    key,
+    itemCount,
+    byteLength: 100,
+  };
+}

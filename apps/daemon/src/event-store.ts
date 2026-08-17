@@ -182,10 +182,12 @@ export interface SessionEventStoreRegistryOptions {
 }
 
 export class SessionEventStoreRegistry {
+  readonly stateRoot: string;
   readonly #options: SessionEventStoreRegistryOptions;
   readonly #stores = new Map<string, Promise<SessionEventStore>>();
 
   constructor(options: SessionEventStoreRegistryOptions) {
+    this.stateRoot = options.stateRoot;
     this.#options = options;
   }
 

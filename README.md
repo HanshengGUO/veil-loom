@@ -8,8 +8,9 @@ honest. Raw Pi sessions can chat, code, run local tools, and publish interactive
 Veil sessions add guarded data, promotion contracts, statistical gates, Experiment memory, and
 reproduction.
 
-> Status: pre-alpha with a working event/replay backbone and a real Pi host exercised by an offline,
-> deterministic provider fixture. Nothing is published to npm.
+> Status: pre-alpha with durable replay, a real Pi host, and a validated daily-factor reference
+> view rendered from content-addressed resources. The model path remains fully offline, and nothing
+> is published to npm.
 
 ## Session profiles
 
@@ -66,25 +67,27 @@ npm run dev:web
 ```
 
 Both processes bind to loopback. In development, the daemon runs a scripted request through Pi's
-real programmatic session and Loom extension using Pi's offline faux provider. It persists only the
-public conversation, tool, and task projection; the web app rebuilds that state from event one and
-reconnects from the last event the reducer actually applied.
+real programmatic session and Loom extension using Pi's offline faux provider. The extension invokes
+one explicit adapter for the committed daily-factor output. Loom validates it, atomically stores
+content-addressed series, and publishes only bounded view metadata to the durable event stream.
 
 Open the web app at its exact loopback address, `http://127.0.0.1:3000`. It performs an Origin-gated
 bootstrap and receives an HttpOnly daemon-session cookie; no token needs to be copied into the UI or
 placed in a URL. The daemon listens at `http://127.0.0.1:43120` by default.
 
-The chart shapes are still placeholders, and the fixture does not run a backtest or contact a model
-service. Its purpose is to exercise the Pi host, cancellation boundary, ordering, recovery, profile
-freezing, and honest exploratory labels before local project execution is enabled.
+The Web app loads the owned view resources and renders actual OHLC bars, execution markers, net
+equity, drawdown, metrics, and provenance. This is a deterministic import fixture, not a general
+backtest engine, and it does not contact a model service. Its result is always marked
+**EXPLORATORY · UNVERIFIED**. Synchronized interaction and selection grounding come next.
 
 ## Initial milestone
 
-The first vertical slice will run one deterministic daily-factor example end to end:
+The first vertical slice is taking one deterministic daily-factor example end to end:
 
 1. open a local project;
 2. create a Raw Pi or Veil session;
-3. render market, equity, drawdown, trades, and explicit assurance;
+3. render market, equity, drawdown, trades, and explicit assurance — implemented for the reference
+   adapter;
 4. send a selected chart range back to Pi;
 5. create a fresh Veil verification attempt;
 6. inspect the Experiment and reproduce it.

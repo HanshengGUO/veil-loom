@@ -21,3 +21,8 @@ are tracked independently from package versions.
 - A real Raw Pi `AgentSession` host with a deterministic offline provider and inline Loom extension.
 - Versioned session, message, and cancellation commands with durable redacted Pi event projection.
 - Pi package/provider/model fingerprints, cancellation coverage, and provider-error redaction tests.
+- A strict `loom.backtest-import.v0` reference adapter with bigint-safe time and explicit metric,
+  execution, assurance, and provenance semantics.
+- Atomically published content-addressed view/blob resources with ownership-bound read APIs and
+  fixed JSON size limits.
+- Real OHLC, trade, net-equity, drawdown, metric, and provenance projection in the Web canvas.

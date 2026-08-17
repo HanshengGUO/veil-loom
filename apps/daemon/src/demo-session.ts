@@ -1,4 +1,4 @@
-import type { LoomEventEnvelope } from "@veilquant/loom-protocol";
+import { isLoomPublishedViewDescriptor, type LoomEventEnvelope } from "@veilquant/loom-protocol";
 import type { SessionEventStore, SessionEventStoreRegistry } from "./event-store.js";
 import {
   LOOM_FIXTURE_FINAL,
@@ -6,7 +6,7 @@ import {
   LOOM_FIXTURE_PREAMBLE,
   LOOM_FIXTURE_PROVIDER,
 } from "./pi/deterministic-session.js";
-import { LOOM_FIXTURE_TOOL_NAME } from "./pi/loom-extension.js";
+import { LOOM_REFERENCE_BACKTEST_TOOL_NAME } from "./pi/loom-extension.js";
 import type { LoomRuntimeHost } from "./runtime-host.js";
 
 export const DEMO_PROJECT_ID = "daily-factor-demo";
@@ -24,6 +24,7 @@ const ALLOWED_DEMO_EVENT_TYPES = new Set([
   "message.assistant_completed",
   "tool.started",
   "tool.completed",
+  "view.published",
   "task.started",
   "task.completed",
 ]);
@@ -71,6 +72,7 @@ function assertDemoReplay(events: readonly LoomEventEnvelope[]): void {
   const toolStarts = events.filter((event) => event.type === "tool.started");
   const toolEnds = events.filter((event) => event.type === "tool.completed");
   const completedTasks = events.filter((event) => event.type === "task.completed");
+  const views = events.filter((event) => event.type === "view.published");
   const ready = events.find((event) => event.type === "session.ready");
 
   if (
@@ -85,11 +87,14 @@ function assertDemoReplay(events: readonly LoomEventEnvelope[]): void {
     completedMessages[0] !== LOOM_FIXTURE_PREAMBLE ||
     completedMessages[1] !== LOOM_FIXTURE_FINAL ||
     toolStarts.length !== 1 ||
-    toolStarts[0]?.payload.toolName !== LOOM_FIXTURE_TOOL_NAME ||
+    toolStarts[0]?.payload.toolName !== LOOM_REFERENCE_BACKTEST_TOOL_NAME ||
     toolEnds.length !== 1 ||
     toolEnds[0]?.payload.toolCallId !== toolStarts[0]?.payload.toolCallId ||
     completedTasks.length !== 1 ||
     completedTasks[0]?.payload.taskId !== DEMO_TASK_ID ||
+    views.length !== 1 ||
+    !isLoomPublishedViewDescriptor(views[0]?.payload) ||
+    views[0].payload.taskId !== DEMO_TASK_ID ||
     !isExpectedRuntime(ready?.payload.runtime) ||
     !assistantDeltasMatchCompletions(events) ||
     JSON.stringify(events).includes("deterministic thought")

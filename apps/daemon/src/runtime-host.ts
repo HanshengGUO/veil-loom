@@ -9,6 +9,8 @@ import {
   DeterministicPiSessionFactory,
   type DeterministicPiSessionFactoryOptions,
 } from "./pi/deterministic-session.js";
+import { DailyFactorReferenceAdapter } from "./reference-backtest/reference-adapter.js";
+import { ResearchArtifactStore } from "./research-artifacts.js";
 import {
   type LoomRuntimeAdapter,
   RawPiRuntimeAdapter,
@@ -165,6 +167,7 @@ export class LoomRuntimeHost {
 
 export interface DefaultRuntimeHostOptions {
   eventStores: SessionEventStoreRegistry;
+  artifacts?: ResearchArtifactStore;
   cwd: string;
   agentDir: string;
   fixture?: DeterministicPiSessionFactoryOptions;
@@ -172,9 +175,12 @@ export interface DefaultRuntimeHostOptions {
 }
 
 export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): LoomRuntimeHost {
+  const artifacts =
+    options.artifacts ?? new ResearchArtifactStore({ stateRoot: options.eventStores.stateRoot });
+  const referenceBacktests = new DailyFactorReferenceAdapter(artifacts);
   const rawPi = new RawPiRuntimeAdapter({
     eventStores: options.eventStores,
-    sessionFactory: new DeterministicPiSessionFactory(options.fixture),
+    sessionFactory: new DeterministicPiSessionFactory({ referenceBacktests }, options.fixture),
     cwd: options.cwd,
     agentDir: options.agentDir,
   });

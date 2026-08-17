@@ -126,6 +126,470 @@ export function isLoomAssurance(input: unknown): input is LoomAssurance {
   return input.issuer === "veil" && input.evidenceRefs.length > 0;
 }
 
+export const LOOM_SERIES_MAX_POINTS = 4_096;
+export const LOOM_JSON_BLOB_MAX_BYTES = 256 * 1_024;
+export const LOOM_VIEW_MAX_TOTAL_BLOB_BYTES = 1_024 * 1_024;
+export const LOOM_VIEW_MAX_RECORD_BYTES = 64 * 1_024;
+
+const CONTENT_ID_PATTERN = "^(blob|view)_[a-f0-9]{64}$";
+const DIGEST_PATTERN = "^sha256:[a-f0-9]{64}$";
+const METRIC_KEY_PATTERN = "^[a-z][a-z0-9._-]{0,63}$";
+const EPOCH_PATTERN = "^-?(0|[1-9][0-9]*)$";
+
+export const LoomContentIdSchema = Type.String({ pattern: CONTENT_ID_PATTERN });
+export const LoomDigestSchema = Type.String({ pattern: DIGEST_PATTERN });
+export const LoomTimeUnitSchema = Type.Union([
+  Type.Literal("ms"),
+  Type.Literal("us"),
+  Type.Literal("ns"),
+]);
+export type LoomTimeUnit = Static<typeof LoomTimeUnitSchema>;
+
+export const LoomTimeSchema = Type.Object(
+  {
+    epoch: Type.String({ pattern: EPOCH_PATTERN }),
+    unit: LoomTimeUnitSchema,
+  },
+  { additionalProperties: false, $id: "LoomTime" },
+);
+export type LoomTime = Static<typeof LoomTimeSchema>;
+
+export const LoomOhlcvPointSchema = Type.Object(
+  {
+    time: LoomTimeSchema,
+    open: Type.Number(),
+    high: Type.Number(),
+    low: Type.Number(),
+    close: Type.Number(),
+    volume: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false, $id: "LoomOhlcvPoint" },
+);
+export type LoomOhlcvPoint = Static<typeof LoomOhlcvPointSchema>;
+
+export const LoomScalarPointSchema = Type.Object(
+  { time: LoomTimeSchema, value: Type.Number() },
+  { additionalProperties: false, $id: "LoomScalarPoint" },
+);
+export type LoomScalarPoint = Static<typeof LoomScalarPointSchema>;
+
+export const LoomTradeRowSchema = Type.Object(
+  {
+    tradeId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    time: LoomTimeSchema,
+    side: Type.Union([Type.Literal("buy"), Type.Literal("sell")]),
+    price: Type.Number({ exclusiveMinimum: 0 }),
+    quantity: Type.Number({ exclusiveMinimum: 0 }),
+  },
+  { additionalProperties: false, $id: "LoomTradeRow" },
+);
+export type LoomTradeRow = Static<typeof LoomTradeRowSchema>;
+
+const LoomMetricMethodSchema = Type.Object(
+  {
+    id: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    description: Type.String({ minLength: 1, maxLength: 240 }),
+  },
+  { additionalProperties: false },
+);
+
+const LoomMetricCommon = {
+  key: Type.String({ pattern: METRIC_KEY_PATTERN }),
+  label: Type.String({ minLength: 1, maxLength: 80 }),
+  unit: Type.Union([
+    Type.Literal("ratio"),
+    Type.Literal("percent"),
+    Type.Literal("currency"),
+    Type.Literal("count"),
+    Type.Literal("price"),
+  ]),
+  scale: Type.Union([
+    Type.Literal("linear"),
+    Type.Literal("percent"),
+    Type.Literal("basis-points"),
+  ]),
+  sampleScope: Type.Literal("full-sample"),
+  method: LoomMetricMethodSchema,
+  evidenceRef: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+};
+
+export const LoomMetricSchema = Type.Union(
+  [
+    Type.Object({ ...LoomMetricCommon, value: Type.Number() }, { additionalProperties: false }),
+    Type.Object(
+      { ...LoomMetricCommon, text: Type.String({ minLength: 1, maxLength: 160 }) },
+      { additionalProperties: false },
+    ),
+  ],
+  { $id: "LoomMetric" },
+);
+export type LoomMetric = Static<typeof LoomMetricSchema>;
+
+export const LoomRegionSchema = Type.Object(
+  {
+    regionId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    kind: Type.Literal("drawdown"),
+    label: Type.String({ minLength: 1, maxLength: 120 }),
+    start: LoomTimeSchema,
+    end: LoomTimeSchema,
+  },
+  { additionalProperties: false, $id: "LoomRegion" },
+);
+export type LoomRegion = Static<typeof LoomRegionSchema>;
+
+export const LoomBacktestSourceSchema = Type.Object(
+  {
+    dataId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    dataDigest: LoomDigestSchema,
+    artifactId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    artifactDigest: LoomDigestSchema,
+  },
+  { additionalProperties: false, $id: "LoomBacktestSource" },
+);
+export type LoomBacktestSource = Static<typeof LoomBacktestSourceSchema>;
+
+export const LoomBacktestRunSchema = Type.Object(
+  {
+    protocolId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    signalLagSessions: Type.Integer({ minimum: 0 }),
+    executionPrice: Type.Union([Type.Literal("open"), Type.Literal("close"), Type.Literal("vwap")]),
+    equityBasis: Type.Literal("net"),
+    costModel: Type.String({ minLength: 1, maxLength: 160 }),
+  },
+  { additionalProperties: false, $id: "LoomBacktestRun" },
+);
+export type LoomBacktestRun = Static<typeof LoomBacktestRunSchema>;
+
+export const LoomBacktestImportSchema = Type.Object(
+  {
+    format: Type.Literal("loom.backtest-import.v0"),
+    title: Type.String({ minLength: 1, maxLength: 160 }),
+    summary: Type.String({ minLength: 1, maxLength: 280 }),
+    timeUnit: LoomTimeUnitSchema,
+    market: Type.Array(LoomOhlcvPointSchema, {
+      minItems: 2,
+      maxItems: LOOM_SERIES_MAX_POINTS,
+    }),
+    equity: Type.Array(LoomScalarPointSchema, {
+      minItems: 2,
+      maxItems: LOOM_SERIES_MAX_POINTS,
+    }),
+    drawdown: Type.Array(LoomScalarPointSchema, {
+      minItems: 2,
+      maxItems: LOOM_SERIES_MAX_POINTS,
+    }),
+    trades: Type.Array(LoomTradeRowSchema, { maxItems: LOOM_SERIES_MAX_POINTS }),
+    metrics: Type.Array(LoomMetricSchema, { minItems: 1, maxItems: 64 }),
+    regions: Type.Array(LoomRegionSchema, { maxItems: 64 }),
+    source: LoomBacktestSourceSchema,
+    run: LoomBacktestRunSchema,
+  },
+  { additionalProperties: false, $id: "LoomBacktestImport" },
+);
+export type LoomBacktestImport = Static<typeof LoomBacktestImportSchema>;
+
+export function isLoomBacktestImport(input: unknown): input is LoomBacktestImport {
+  if (
+    !Check(LoomBacktestImportSchema, input) ||
+    input.title.trim().length === 0 ||
+    input.summary.trim().length === 0
+  ) {
+    return false;
+  }
+  if (!orderedTimes(input.market, true) || !orderedTimes(input.equity, true)) return false;
+  if (!orderedTimes(input.drawdown, true) || !orderedTimes(input.trades, false)) return false;
+  if (!allUseTimeUnit(input, input.timeUnit)) return false;
+  if (
+    input.market.length !== input.equity.length ||
+    input.market.length !== input.drawdown.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < input.market.length; index += 1) {
+    const market = input.market[index];
+    const equity = input.equity[index];
+    const drawdown = input.drawdown[index];
+    if (market === undefined || equity === undefined || drawdown === undefined) return false;
+    if (market.time.epoch !== equity.time.epoch || market.time.epoch !== drawdown.time.epoch) {
+      return false;
+    }
+    if (
+      ![market.open, market.high, market.low, market.close, market.volume].every(Number.isFinite) ||
+      market.open <= 0 ||
+      market.high <= 0 ||
+      market.low <= 0 ||
+      market.close <= 0 ||
+      market.volume < 0 ||
+      market.high < Math.max(market.open, market.low, market.close) ||
+      market.low > Math.min(market.open, market.high, market.close) ||
+      !Number.isFinite(equity.value) ||
+      equity.value <= 0 ||
+      !Number.isFinite(drawdown.value) ||
+      drawdown.value > 0 ||
+      drawdown.value < -1
+    ) {
+      return false;
+    }
+  }
+  const first = input.market[0]?.time;
+  const last = input.market.at(-1)?.time;
+  if (first === undefined || last === undefined) return false;
+  if (
+    input.trades.some(
+      (trade) =>
+        !Number.isFinite(trade.price) ||
+        !Number.isFinite(trade.quantity) ||
+        compareLoomTime(trade.time, first) < 0 ||
+        compareLoomTime(trade.time, last) > 0,
+    )
+  ) {
+    return false;
+  }
+  if (!unique(input.metrics.map((metric) => metric.key))) return false;
+  if (
+    input.metrics.some(
+      (metric) =>
+        metric.label.trim().length === 0 ||
+        metric.method.description.trim().length === 0 ||
+        ("value" in metric && !Number.isFinite(metric.value)),
+    )
+  ) {
+    return false;
+  }
+  if (!unique(input.regions.map((region) => region.regionId))) return false;
+  return input.regions.every(
+    (region) =>
+      compareLoomTime(region.start, first) >= 0 &&
+      compareLoomTime(region.start, region.end) <= 0 &&
+      compareLoomTime(region.end, last) <= 0,
+  );
+}
+
+export const LoomMarketSeriesContentSchema = Type.Object(
+  {
+    format: Type.Literal("loom.series.v0"),
+    kind: Type.Literal("ohlcv"),
+    seriesKey: Type.Literal("market"),
+    timeUnit: LoomTimeUnitSchema,
+    points: Type.Array(LoomOhlcvPointSchema, {
+      minItems: 2,
+      maxItems: LOOM_SERIES_MAX_POINTS,
+    }),
+  },
+  { additionalProperties: false, $id: "LoomMarketSeriesContent" },
+);
+export type LoomMarketSeriesContent = Static<typeof LoomMarketSeriesContentSchema>;
+
+export const LoomScalarSeriesContentSchema = Type.Object(
+  {
+    format: Type.Literal("loom.series.v0"),
+    kind: Type.Literal("scalar"),
+    seriesKey: Type.Union([Type.Literal("equity"), Type.Literal("drawdown")]),
+    timeUnit: LoomTimeUnitSchema,
+    unit: Type.Union([Type.Literal("currency"), Type.Literal("ratio")]),
+    points: Type.Array(LoomScalarPointSchema, {
+      minItems: 2,
+      maxItems: LOOM_SERIES_MAX_POINTS,
+    }),
+  },
+  { additionalProperties: false, $id: "LoomScalarSeriesContent" },
+);
+export type LoomScalarSeriesContent = Static<typeof LoomScalarSeriesContentSchema>;
+
+export const LoomTradesTableContentSchema = Type.Object(
+  {
+    format: Type.Literal("loom.table.v0"),
+    kind: Type.Literal("trades"),
+    tableKey: Type.Literal("trades"),
+    timeUnit: LoomTimeUnitSchema,
+    rows: Type.Array(LoomTradeRowSchema, { maxItems: LOOM_SERIES_MAX_POINTS }),
+  },
+  { additionalProperties: false, $id: "LoomTradesTableContent" },
+);
+export type LoomTradesTableContent = Static<typeof LoomTradesTableContentSchema>;
+
+export const LoomBlobContentSchema = Type.Union(
+  [LoomMarketSeriesContentSchema, LoomScalarSeriesContentSchema, LoomTradesTableContentSchema],
+  { $id: "LoomBlobContent" },
+);
+export type LoomBlobContent = Static<typeof LoomBlobContentSchema>;
+
+export function isLoomBlobContent(input: unknown): input is LoomBlobContent {
+  if (!Check(LoomBlobContentSchema, input)) return false;
+  const items: readonly { time: LoomTime }[] =
+    input.format === "loom.table.v0" ? input.rows : input.points;
+  if (!orderedTimes(items, input.format !== "loom.table.v0")) return false;
+  if (!items.every((item) => item.time.unit === input.timeUnit)) return false;
+  if (input.format === "loom.table.v0") {
+    return input.rows.every(
+      (row) =>
+        Number.isFinite(row.price) &&
+        row.price > 0 &&
+        Number.isFinite(row.quantity) &&
+        row.quantity > 0,
+    );
+  }
+  if (input.kind === "ohlcv") {
+    return input.points.every(
+      (point) =>
+        [point.open, point.high, point.low, point.close, point.volume].every(Number.isFinite) &&
+        point.open > 0 &&
+        point.high > 0 &&
+        point.low > 0 &&
+        point.close > 0 &&
+        point.volume >= 0 &&
+        point.high >= Math.max(point.open, point.low, point.close) &&
+        point.low <= Math.min(point.open, point.high, point.close),
+    );
+  }
+  return input.points.every(
+    (point) =>
+      Number.isFinite(point.value) &&
+      (input.seriesKey === "equity" ? point.value > 0 : point.value >= -1 && point.value <= 0),
+  );
+}
+
+export const LoomBlobRecordSchema = Type.Object(
+  {
+    format: Type.Literal("loom.blob.v0"),
+    blobId: LoomContentIdSchema,
+    createdAt: Type.String({ minLength: 1 }),
+    content: LoomBlobContentSchema,
+  },
+  { additionalProperties: false, $id: "LoomBlobRecord" },
+);
+export type LoomBlobRecord = Static<typeof LoomBlobRecordSchema>;
+
+export function isLoomBlobRecord(input: unknown): input is LoomBlobRecord {
+  if (!Check(LoomBlobRecordSchema, input) || !input.blobId.startsWith("blob_")) return false;
+  if (!isCanonicalIsoTime(input.createdAt)) return false;
+  return isLoomBlobContent(input.content);
+}
+
+export const LoomBlobReferenceSchema = Type.Object(
+  {
+    blobId: LoomContentIdSchema,
+    contentFormat: Type.Union([Type.Literal("loom.series.v0"), Type.Literal("loom.table.v0")]),
+    kind: Type.Union([Type.Literal("ohlcv"), Type.Literal("scalar"), Type.Literal("trades")]),
+    key: Type.Union([
+      Type.Literal("market"),
+      Type.Literal("equity"),
+      Type.Literal("drawdown"),
+      Type.Literal("trades"),
+    ]),
+    itemCount: Type.Integer({ minimum: 0, maximum: LOOM_SERIES_MAX_POINTS }),
+    byteLength: Type.Integer({ minimum: 1, maximum: LOOM_JSON_BLOB_MAX_BYTES }),
+  },
+  { additionalProperties: false, $id: "LoomBlobReference" },
+);
+export type LoomBlobReference = Static<typeof LoomBlobReferenceSchema>;
+
+export const LoomViewProvenanceSchema = Type.Object(
+  {
+    format: Type.Literal("loom.view-provenance.v0"),
+    projectId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    sessionId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    taskId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    adapter: Type.Object(
+      {
+        id: Type.Literal("loom.reference.daily-factor"),
+        version: Type.Literal("0"),
+      },
+      { additionalProperties: false },
+    ),
+    source: LoomBacktestSourceSchema,
+    run: LoomBacktestRunSchema,
+    experimentRef: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+  },
+  { additionalProperties: false, $id: "LoomViewProvenance" },
+);
+export type LoomViewProvenance = Static<typeof LoomViewProvenanceSchema>;
+
+export const LoomBacktestViewSchema = Type.Object(
+  {
+    format: Type.Literal("loom.backtest-view.v0"),
+    viewId: LoomContentIdSchema,
+    title: Type.String({ minLength: 1, maxLength: 160 }),
+    summary: Type.String({ minLength: 1, maxLength: 280 }),
+    createdAt: Type.String({ minLength: 1 }),
+    assurance: LoomAssuranceSchema,
+    timeRange: Type.Object(
+      { start: LoomTimeSchema, end: LoomTimeSchema },
+      { additionalProperties: false },
+    ),
+    market: Type.Union([LoomBlobReferenceSchema, Type.Null()]),
+    equity: LoomBlobReferenceSchema,
+    drawdown: Type.Union([LoomBlobReferenceSchema, Type.Null()]),
+    trades: Type.Union([LoomBlobReferenceSchema, Type.Null()]),
+    metrics: Type.Array(LoomMetricSchema, { minItems: 1, maxItems: 64 }),
+    regions: Type.Array(LoomRegionSchema, { maxItems: 64 }),
+    provenance: LoomViewProvenanceSchema,
+  },
+  { additionalProperties: false, $id: "LoomBacktestView" },
+);
+export type LoomBacktestView = Static<typeof LoomBacktestViewSchema>;
+
+export function isLoomBacktestView(input: unknown): input is LoomBacktestView {
+  if (!Check(LoomBacktestViewSchema, input) || !input.viewId.startsWith("view_")) return false;
+  if (!isCanonicalIsoTime(input.createdAt) || !isLoomAssurance(input.assurance)) return false;
+  if (input.title.trim().length === 0 || input.summary.trim().length === 0) return false;
+  if (input.assurance.state !== "exploratory" || input.assurance.issuer !== "loom") return false;
+  if (input.timeRange.start.unit !== input.timeRange.end.unit) return false;
+  if (compareLoomTime(input.timeRange.start, input.timeRange.end) > 0) return false;
+  if (!unique(input.metrics.map((metric) => metric.key))) return false;
+  if (!unique(input.regions.map((region) => region.regionId))) return false;
+  const references = [input.market, input.equity, input.drawdown, input.trades].filter(
+    (reference): reference is LoomBlobReference => reference !== null,
+  );
+  if (!unique(references.map((reference) => reference.blobId))) return false;
+  if (
+    references.reduce((total, reference) => total + reference.byteLength, 0) >
+    LOOM_VIEW_MAX_TOTAL_BLOB_BYTES
+  ) {
+    return false;
+  }
+  if (!referenceMatches(input.market, "loom.series.v0", "ohlcv", "market")) return false;
+  if (!referenceMatches(input.equity, "loom.series.v0", "scalar", "equity")) return false;
+  if (!referenceMatches(input.drawdown, "loom.series.v0", "scalar", "drawdown")) return false;
+  if (!referenceMatches(input.trades, "loom.table.v0", "trades", "trades")) return false;
+  return input.regions.every(
+    (region) =>
+      region.start.unit === input.timeRange.start.unit &&
+      region.end.unit === input.timeRange.start.unit &&
+      compareLoomTime(region.start, input.timeRange.start) >= 0 &&
+      compareLoomTime(region.start, region.end) <= 0 &&
+      compareLoomTime(region.end, input.timeRange.end) <= 0,
+  );
+}
+
+export const LoomPublishedViewDescriptorSchema = Type.Object(
+  {
+    format: Type.Literal("loom.view-published.v0"),
+    viewId: LoomContentIdSchema,
+    viewFormat: Type.Literal("loom.backtest-view.v0"),
+    kind: Type.Literal("backtest"),
+    title: Type.String({ minLength: 1, maxLength: 160 }),
+    summary: Type.String({ minLength: 1, maxLength: 280 }),
+    taskId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    assurance: LoomAssuranceSchema,
+  },
+  { additionalProperties: false, $id: "LoomPublishedViewDescriptor" },
+);
+export type LoomPublishedViewDescriptor = Static<typeof LoomPublishedViewDescriptorSchema>;
+
+export function isLoomPublishedViewDescriptor(
+  input: unknown,
+): input is LoomPublishedViewDescriptor {
+  return (
+    Check(LoomPublishedViewDescriptorSchema, input) &&
+    input.viewId.startsWith("view_") &&
+    input.title.trim().length > 0 &&
+    input.summary.trim().length > 0 &&
+    isLoomAssurance(input.assurance) &&
+    input.assurance.state === "exploratory"
+  );
+}
+
 export const LoomHealthResponseSchema = Type.Object(
   {
     format: Type.Literal("loom.health.v0"),
@@ -322,6 +786,9 @@ export const LoomErrorCodeSchema = Type.Union(
     Type.Literal("TASK_NOT_FOUND"),
     Type.Literal("TASK_NOT_CANCELLABLE"),
     Type.Literal("RUNTIME_UNAVAILABLE"),
+    Type.Literal("VIEW_NOT_FOUND"),
+    Type.Literal("BLOB_NOT_FOUND"),
+    Type.Literal("VIEW_UNAVAILABLE"),
     Type.Literal("INTERNAL_ERROR"),
   ],
   { $id: "LoomErrorCode" },
@@ -339,6 +806,55 @@ export const LoomErrorResponseSchema = Type.Object(
 );
 
 export type LoomErrorResponse = Static<typeof LoomErrorResponseSchema>;
+
+export function compareLoomTime(left: LoomTime, right: LoomTime): number {
+  const factors: Record<LoomTimeUnit, bigint> = {
+    ms: 1_000_000n,
+    us: 1_000n,
+    ns: 1n,
+  };
+  const leftValue = BigInt(left.epoch) * factors[left.unit];
+  const rightValue = BigInt(right.epoch) * factors[right.unit];
+  return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+}
+
+function orderedTimes<T extends { time: LoomTime }>(items: readonly T[], strict: boolean): boolean {
+  for (let index = 1; index < items.length; index += 1) {
+    const previous = items[index - 1];
+    const current = items[index];
+    if (previous === undefined || current === undefined) return false;
+    const comparison = compareLoomTime(previous.time, current.time);
+    if (strict ? comparison >= 0 : comparison > 0) return false;
+  }
+  return true;
+}
+
+function allUseTimeUnit(input: LoomBacktestImport, unit: LoomTimeUnit): boolean {
+  const timed = [...input.market, ...input.equity, ...input.drawdown, ...input.trades];
+  return (
+    timed.every((item) => item.time.unit === unit) &&
+    input.regions.every((region) => region.start.unit === unit && region.end.unit === unit)
+  );
+}
+
+function referenceMatches(
+  reference: LoomBlobReference | null,
+  contentFormat: LoomBlobReference["contentFormat"],
+  kind: LoomBlobReference["kind"],
+  key: LoomBlobReference["key"],
+): boolean {
+  return (
+    reference === null ||
+    (reference.blobId.startsWith("blob_") &&
+      reference.contentFormat === contentFormat &&
+      reference.kind === kind &&
+      reference.key === key)
+  );
+}
+
+function unique(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
+}
 
 function isCanonicalIsoTime(input: string): boolean {
   const milliseconds = Date.parse(input);

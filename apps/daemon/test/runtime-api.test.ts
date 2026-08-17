@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   isLoomAcceptedCommandResponse,
+  isLoomBacktestView,
+  isLoomBlobRecord,
+  isLoomPublishedViewDescriptor,
   type LoomAcceptedCommandResponse,
   LoomErrorResponseSchema,
   LoomEventsResponseSchema,
@@ -73,6 +76,38 @@ describe("Raw Pi command API", () => {
         }),
       ]),
     });
+    if (!Check(LoomEventsResponseSchema, replayBody)) throw new Error("Expected replay events");
+    const published = replayBody.events.find(
+      (event) => event.type === "view.published" && isLoomPublishedViewDescriptor(event.payload),
+    );
+    if (published === undefined || !isLoomPublishedViewDescriptor(published.payload)) {
+      throw new Error("Expected a published backtest view");
+    }
+
+    const viewResponse = await app.request(
+      `/v0/views/${published.payload.viewId}?projectId=project-a&sessionId=${createCommand.sessionId}`,
+      { headers },
+    );
+    const viewBody: unknown = await viewResponse.json();
+    expect(viewResponse.status).toBe(200);
+    expect(viewResponse.headers.get("cache-control")).toContain("immutable");
+    expect(isLoomBacktestView(viewBody)).toBe(true);
+    if (!isLoomBacktestView(viewBody) || viewBody.market === null) {
+      throw new Error("Expected a market series reference");
+    }
+    const blobResponse = await app.request(
+      `/v0/blobs/${viewBody.market.blobId}?projectId=project-a&sessionId=${createCommand.sessionId}&viewId=${viewBody.viewId}`,
+      { headers },
+    );
+    expect(blobResponse.status).toBe(200);
+    expect(isLoomBlobRecord(await blobResponse.json())).toBe(true);
+
+    const wrongSession = await app.request(
+      `/v0/views/${viewBody.viewId}?projectId=project-a&sessionId=another-session`,
+      { headers },
+    );
+    expect(wrongSession.status).toBe(404);
+    expect(await wrongSession.json()).toMatchObject({ code: "VIEW_NOT_FOUND" });
   });
 
   it("rejects malformed commands and an unavailable Veil profile without leaking internals", async () => {

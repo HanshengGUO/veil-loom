@@ -51,9 +51,27 @@ into Loom events. It does not publish thinking blocks, tool arguments, tool resu
 errors, environment values, or local paths. Every session records the Pi package version and a
 provider/model fingerprint without recording credentials.
 
-The current slice enables only a deterministic offline provider and a fixture-only Loom extension
-tool. The tool has no shell, filesystem, or network authority. Real provider configuration and local
-coding tools remain opt-in work; they will stay in the daemon rather than moving into the browser.
+The current slice enables only a deterministic offline provider and one reference-backtest Loom
+tool. The tool can invoke the committed adapter but has no shell, filesystem, or network authority.
+Real provider configuration and local coding tools remain opt-in work; they will stay in the daemon
+rather than moving into the browser.
+
+## Research views
+
+The reference adapter accepts one exact `loom.backtest-import.v0` record. It validates ordered time,
+uniform units, finite OHLCV/equity/drawdown values, trades, metric methods, execution semantics, and
+source identities before writing anything. A successful import produces four small JSON resources
+and one `loom.backtest-view.v0` record. Resource IDs are SHA-256 identities over canonical JSON.
+
+Resources are immutable. Blobs are stored by content identity; views are bound to project, session,
+task, adapter, source, artifact, and run provenance. The daemon writes and syncs temporary files,
+then atomically links them into place before appending `view.published`. A failed event append may
+leave an unreferenced immutable object, but it cannot expose a partial view.
+
+The event log contains only `loom.view-published.v0` metadata. The browser uses that durable
+descriptor to request the view and each referenced blob, checks their schemas and ownership again,
+and renders a static chart projection. Linked viewports and selection are deliberately separate from
+this storage boundary.
 
 ## Event recovery
 
@@ -81,9 +99,10 @@ State lives in the normal per-user application-state directory:
 ## Development fixture
 
 `npm run dev:daemon` runs one scripted request through a real Pi session and Pi's offline faux
-provider. The resulting public projection is durable, is validated on restart, and refuses to reuse
-a conflicting log. `npm run dev:web` authenticates directly to the loopback daemon and renders that
-SSE projection. Production builds do not enable the demo stream.
+provider, then imports the committed daily-factor reference output. The resulting event projection
+and content-addressed view are durable, are validated on restart, and refuse conflicting identities.
+`npm run dev:web` authenticates directly to the loopback daemon and renders the real fixture series.
+Production builds do not enable the demo stream.
 
 ## Dependency direction
 

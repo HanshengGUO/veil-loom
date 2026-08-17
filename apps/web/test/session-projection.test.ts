@@ -10,9 +10,20 @@ describe("session projection reducer", () => {
       event(2, "message.user_appended", { messageId: "user-1", content: "Run it" }),
       event(3, "task.started", { taskId: "task-1", label: "Reference backtest" }),
       event(4, "view.published", {
-        viewId: "view-1",
+        format: "loom.view-published.v0",
+        viewId: `view_${"a".repeat(64)}`,
+        viewFormat: "loom.backtest-view.v0",
         kind: "backtest",
         title: "Daily factor",
+        summary: "A validated exploratory view.",
+        taskId: "task-1",
+        assurance: {
+          format: "loom.assurance.v0",
+          state: "exploratory",
+          issuer: "loom",
+          evidenceRefs: [],
+          limitations: ["Not independently verified"],
+        },
       }),
       event(5, "message.assistant_delta", { messageId: "assistant-1", delta: "Done" }),
       event(6, "message.assistant_completed", { messageId: "assistant-1" }),
@@ -39,7 +50,7 @@ describe("session projection reducer", () => {
       profile: "raw-pi",
       status: "ready",
       runtime: { provider: "loom-offline-fixture", model: "loom-fixture-v0" },
-      activeView: { id: "view-1", title: "Daily factor" },
+      activeView: { viewId: `view_${"a".repeat(64)}`, title: "Daily factor" },
       conversation: [
         { id: "user-1", role: "user", content: "Run it" },
         { id: "assistant-1", role: "assistant", content: "Done", complete: true },
@@ -106,6 +117,23 @@ describe("session projection reducer", () => {
     expect(result).toMatchObject({
       outcome: "rejected",
       state: { lastSequence: 0, issue: { kind: "ownership" } },
+    });
+  });
+
+  it("fails closed instead of projecting an unvalidated view payload", () => {
+    const state = createSessionProjection("project-a", "session-a");
+    const result = applySessionEvent(
+      state,
+      event(1, "view.published", {
+        viewId: "view-forged",
+        kind: "backtest",
+        title: "Forged",
+        assurance: { state: "accepted" },
+      }),
+    );
+    expect(result).toMatchObject({
+      outcome: "rejected",
+      state: { lastSequence: 0, activeView: undefined, issue: { kind: "protocol" } },
     });
   });
 });

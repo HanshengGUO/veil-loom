@@ -71,8 +71,38 @@ or event ID with different content is a protocol conflict. If sequence 12 arrive
 the consumer must not apply it or let the browser's implicit SSE cursor advance recovery past 11. It
 closes the connection and explicitly requests replay after 10.
 
-Large chart series will be referenced as immutable blobs rather than repeated in an unbounded event
-log.
+Chart series are referenced as immutable blobs rather than repeated in an unbounded event log. A
+`view.published` event carries an exact `loom.view-published.v0` descriptor, not series values.
+
+## Backtest views
+
+The first adapter boundary is `loom.backtest-import.v0`. It requires one time unit across ordered
+market, equity, drawdown, trade, and region values. Time is represented as a signed decimal epoch
+string plus `ms`, `us`, or `ns`; consumers compare it without converting through an unsafe
+JavaScript number. Every metric supplies a stable key, value or text, unit, scale, sample scope, and
+method.
+
+A valid import becomes:
+
+- `loom.backtest-view.v0` metadata with exploratory assurance and project/session/task provenance;
+- `loom.blob.v0` envelopes containing `loom.series.v0` OHLCV or scalar data;
+- a `loom.blob.v0` envelope containing a `loom.table.v0` trade table.
+
+Blob IDs are SHA-256 hashes of canonical content bytes. View IDs hash canonical view content before
+the ID is attached. The v0 JSON path permits at most 4,096 items per series, 256 KiB per blob,
+1 MiB of references per view, and 64 KiB of view metadata. Arrow IPC and larger paged or ranged
+resources are not silently accepted; they require a later protocol version.
+
+Protected reads bind every resource to the durable view ownership tuple:
+
+```text
+GET /v0/views/:viewId?projectId=:projectId&sessionId=:sessionId
+GET /v0/blobs/:blobId?projectId=:projectId&sessionId=:sessionId&viewId=:viewId
+```
+
+The blob route serves only a blob referenced by that owned view. Unknown, cross-session, corrupt, or
+identity-mismatched resources fail closed. The reference adapter can issue only evidence-free
+exploratory assurance; ordinary Pi tool output is never inferred to be a view.
 
 ## Commands
 
