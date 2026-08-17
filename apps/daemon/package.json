@@ -1,0 +1,22 @@
+{
+  "name": "@veilquant/loom-daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local process and session daemon for Veil Loom",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@veilquant/loom-protocol": "0.0.0",
+    "hono": "4.13.2"
+  },
+  "devDependencies": {
+    "tsx": "4.23.12"
+  }
+}

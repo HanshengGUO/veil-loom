@@ -1,0 +1,39 @@
+{
+  "name": "veil-loom",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first visual workspace for quantitative research with Pi and Veil",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HanshengGUO/veil-loom.git"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.10.0 <30"
+  },
+  "packageManager": "npm@11.19.0",
+  "scripts": {
+    "build": "npm run build --workspace @veilquant/loom-protocol && npm run build --workspace @veilquant/loom-daemon && npm run build --workspace @veilquant/loom-web",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "dev:daemon": "npm run build --workspace @veilquant/loom-protocol && npm run dev --workspace @veilquant/loom-daemon",
+    "dev:web": "npm run build --workspace @veilquant/loom-protocol && npm run dev --workspace @veilquant/loom-web",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "npm run build --workspace @veilquant/loom-protocol && vitest run",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.8",
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

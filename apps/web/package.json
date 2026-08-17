@@ -1,0 +1,28 @@
+{
+  "name": "@veilquant/loom-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Next.js interface for Veil Loom",
+  "license": "MIT",
+  "scripts": {
+    "build": "cross-env NEXT_TELEMETRY_DISABLED=1 next build",
+    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev",
+    "start": "cross-env NEXT_TELEMETRY_DISABLED=1 next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@veilquant/loom-protocol": "0.0.0",
+    "next": "16.3.1",
+    "postcss": "8.5.26",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwindcss": "4.3.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "cross-env": "10.1.0"
+  }
+}
