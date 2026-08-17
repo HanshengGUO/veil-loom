@@ -65,7 +65,8 @@ npm run dev:web
 ```
 
 The initial daemon listens on `127.0.0.1:43120`; the web app uses Next.js's normal development
-address. The current page is a boundary-first product shell, not a functional Pi integration.
+address. Durable ordered event replay is in place, but the current page is still a product shell and
+does not run Pi yet.
 
 ## Initial milestone
 

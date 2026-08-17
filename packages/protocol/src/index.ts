@@ -128,3 +128,137 @@ export const LoomCapabilitiesResponseSchema = Type.Object(
 );
 
 export type LoomCapabilitiesResponse = Static<typeof LoomCapabilitiesResponseSchema>;
+
+const PORTABLE_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$";
+const PORTABLE_ID_REGEXP = new RegExp(PORTABLE_ID_PATTERN);
+
+export const LoomPortableIdSchema = Type.String({
+  pattern: PORTABLE_ID_PATTERN,
+  $id: "LoomPortableId",
+});
+
+export type LoomPortableId = Static<typeof LoomPortableIdSchema>;
+
+export function isLoomPortableId(input: unknown): input is LoomPortableId {
+  return typeof input === "string" && PORTABLE_ID_REGEXP.test(input);
+}
+
+export const LoomEventTypeSchema = Type.Union(
+  [
+    Type.Literal("session.created"),
+    Type.Literal("session.ready"),
+    Type.Literal("session.status_changed"),
+    Type.Literal("message.user_appended"),
+    Type.Literal("message.assistant_delta"),
+    Type.Literal("message.assistant_completed"),
+    Type.Literal("tool.started"),
+    Type.Literal("tool.progress"),
+    Type.Literal("tool.completed"),
+    Type.Literal("tool.failed"),
+    Type.Literal("task.started"),
+    Type.Literal("task.cancel_requested"),
+    Type.Literal("task.cancelled"),
+    Type.Literal("task.completed"),
+    Type.Literal("task.failed"),
+    Type.Literal("view.published"),
+    Type.Literal("view.superseded"),
+    Type.Literal("selection.created"),
+    Type.Literal("veil.verification_started"),
+    Type.Literal("veil.stage_changed"),
+    Type.Literal("veil.experiment_recorded"),
+    Type.Literal("veil.reproduction_completed"),
+    Type.Literal("system.notice"),
+  ],
+  { $id: "LoomEventType" },
+);
+
+export type LoomEventType = Static<typeof LoomEventTypeSchema>;
+
+export const LoomEventPayloadSchema = Type.Record(Type.String(), Type.Unknown(), {
+  $id: "LoomEventPayload",
+});
+
+export type LoomEventPayload = Static<typeof LoomEventPayloadSchema>;
+
+export const LoomEventEnvelopeSchema = Type.Object(
+  {
+    format: Type.Literal("loom.event.v0"),
+    eventId: LoomPortableIdSchema,
+    projectId: LoomPortableIdSchema,
+    sessionId: LoomPortableIdSchema,
+    sequence: Type.Integer({ minimum: 1 }),
+    occurredAt: Type.String({ minLength: 1 }),
+    type: LoomEventTypeSchema,
+    payload: LoomEventPayloadSchema,
+  },
+  { additionalProperties: false, $id: "LoomEventEnvelope" },
+);
+
+export type LoomEventEnvelope = Static<typeof LoomEventEnvelopeSchema>;
+
+export function isLoomEventEnvelope(input: unknown): input is LoomEventEnvelope {
+  try {
+    if (!Check(LoomEventEnvelopeSchema, input)) return false;
+    return isCanonicalIsoTime(input.occurredAt) && isJsonRecord(input.payload);
+  } catch {
+    return false;
+  }
+}
+
+export const LoomEventsResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.events.v0"),
+    events: Type.Array(LoomEventEnvelopeSchema),
+  },
+  { additionalProperties: false, $id: "LoomEventsResponse" },
+);
+
+export type LoomEventsResponse = Static<typeof LoomEventsResponseSchema>;
+
+export const LoomErrorCodeSchema = Type.Union(
+  [
+    Type.Literal("INVALID_REQUEST"),
+    Type.Literal("EVENT_CURSOR_AHEAD"),
+    Type.Literal("EVENT_LOG_UNAVAILABLE"),
+    Type.Literal("INTERNAL_ERROR"),
+  ],
+  { $id: "LoomErrorCode" },
+);
+
+export type LoomErrorCode = Static<typeof LoomErrorCodeSchema>;
+
+export const LoomErrorResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.error.v0"),
+    code: LoomErrorCodeSchema,
+    message: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false, $id: "LoomErrorResponse" },
+);
+
+export type LoomErrorResponse = Static<typeof LoomErrorResponseSchema>;
+
+function isCanonicalIsoTime(input: string): boolean {
+  const milliseconds = Date.parse(input);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === input;
+}
+
+function isJsonRecord(input: unknown): input is Record<string, unknown> {
+  return isJsonValue(input, new WeakSet()) && input !== null && !Array.isArray(input);
+}
+
+function isJsonValue(input: unknown, ancestors: WeakSet<object>): boolean {
+  if (input === null || typeof input === "string" || typeof input === "boolean") return true;
+  if (typeof input === "number") return Number.isFinite(input);
+  if (typeof input !== "object") return false;
+  if (ancestors.has(input)) return false;
+  ancestors.add(input);
+  try {
+    if (Array.isArray(input)) return input.every((value) => isJsonValue(value, ancestors));
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    return Object.values(input).every((value) => isJsonValue(value, ancestors));
+  } finally {
+    ancestors.delete(input);
+  }
+}

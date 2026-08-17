@@ -4,6 +4,11 @@ Veil Loom is local-first, but localhost alone is not an authentication boundary.
 a startup token, strict Origin validation, loopback-only binding, project capabilities, and
 content-addressed blob identifiers.
 
+The current pre-alpha daemon binds only to `127.0.0.1` and exposes read-only health, capability,
+event replay, and event stream routes. Startup-token and Origin enforcement are the next security
+milestone and must land before browser-triggered local execution. Do not expose this daemon through
+a proxy or a non-loopback bind.
+
 ## Protected values
 
 The browser must not receive:
@@ -14,6 +19,9 @@ The browser must not receive:
 - private child-process diagnostics;
 - raw data unless an explicit bounded view allows it;
 - authority to label evidence as verified.
+
+Session logs accept only versioned, JSON-safe event envelopes. Public API failures use stable error
+codes and do not return storage paths or private filesystem diagnostics.
 
 ## Non-goals
 

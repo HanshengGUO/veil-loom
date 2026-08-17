@@ -32,6 +32,24 @@ Next.js request handlers and Server Actions do not own research tasks. The daemo
 persists task state, and reports progress or a terminal result through the event stream. Browser
 disconnects do not cancel tasks.
 
+## Event recovery
+
+Each session has an append-only JSONL event log with its own contiguous sequence. The daemon syncs a
+new record to disk before making it visible to an SSE subscriber. On restart it validates the full
+log and rebuilds the in-memory tail; partial or reordered records fail closed instead of being
+silently dropped.
+
+The browser reconnects with the last sequence it applied. Subscription and replay are registered as
+one serialized operation, so an event cannot fall between the replay snapshot and the live stream.
+
+State lives in the normal per-user application-state directory:
+
+- Linux: `$XDG_STATE_HOME/veil-loom`, or `~/.local/state/veil-loom`;
+- macOS: `~/Library/Application Support/Veil Loom`;
+- Windows: `%LOCALAPPDATA%\\Veil Loom`.
+
+`LOOM_STATE_DIR` provides an explicit override for development and packaging.
+
 ## Dependency direction
 
 `apps/web` depends only on the protocol package. `apps/daemon` depends on the protocol and may depend

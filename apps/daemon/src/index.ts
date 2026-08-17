@@ -1,5 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createLoomApp } from "./app.js";
+import { SessionEventStoreRegistry } from "./event-store.js";
+import { resolveLoomStateRoot } from "./state-root.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_PORT = 43_120;
@@ -14,9 +16,10 @@ export function parseDaemonPort(input: string | undefined): number {
 }
 
 const port = parseDaemonPort(process.env.LOOM_DAEMON_PORT);
+const eventStores = new SessionEventStoreRegistry({ stateRoot: resolveLoomStateRoot() });
 
 serve({
-  fetch: createLoomApp().fetch,
+  fetch: createLoomApp({ eventStores }).fetch,
   hostname: LOOPBACK_HOST,
   port,
 });

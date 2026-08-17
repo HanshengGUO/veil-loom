@@ -2,8 +2,11 @@ import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import {
   isLoomAssurance,
+  isLoomEventEnvelope,
+  isLoomPortableId,
   LOOM_PROFILE_DESCRIPTORS,
   LoomAssuranceSchema,
+  LoomEventEnvelopeSchema,
   LoomProfileDescriptorSchema,
   RAW_PI_PROFILE,
   VEIL_PROFILE,
@@ -26,6 +29,44 @@ describe("Loom profile protocol", () => {
         verified: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("Loom event protocol", () => {
+  const event = {
+    format: "loom.event.v0",
+    eventId: "evt_00000000-0000-4000-8000-000000000001",
+    projectId: "project-a",
+    sessionId: "session-a",
+    sequence: 1,
+    occurredAt: "2026-08-17T10:00:00.000Z",
+    type: "system.notice",
+    payload: { message: "ready", progress: 0.5 },
+  };
+
+  it("accepts an exact, JSON-safe event envelope", () => {
+    expect(Check(LoomEventEnvelopeSchema, event)).toBe(true);
+    expect(isLoomEventEnvelope(event)).toBe(true);
+  });
+
+  it("rejects non-canonical time, non-finite payloads, and unknown fields", () => {
+    expect(isLoomEventEnvelope({ ...event, occurredAt: "2026-08-17" })).toBe(false);
+    expect(isLoomEventEnvelope({ ...event, payload: { metric: Number.NaN } })).toBe(false);
+    expect(Check(LoomEventEnvelopeSchema, { ...event, verified: true })).toBe(false);
+  });
+
+  it("rejects cyclic payloads without throwing", () => {
+    const payload: Record<string, unknown> = {};
+    payload.self = payload;
+    expect(() => isLoomEventEnvelope({ ...event, payload })).not.toThrow();
+    expect(isLoomEventEnvelope({ ...event, payload })).toBe(false);
+  });
+
+  it("rejects identifiers that could become paths", () => {
+    expect(isLoomEventEnvelope({ ...event, sessionId: "../session-a" })).toBe(false);
+    expect(isLoomEventEnvelope({ ...event, projectId: "project/a" })).toBe(false);
+    expect(isLoomPortableId("project-a_1.0")).toBe(true);
+    expect(isLoomPortableId("../project-a")).toBe(false);
   });
 });
 
