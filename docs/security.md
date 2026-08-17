@@ -60,6 +60,13 @@ association. The browser validates each record again before rendering it. The co
 fixture is intentionally public; private project data remains outside the browser until a separately
 authorized bounded-view design exists.
 
+Chart selection does not widen that view boundary. The browser cannot provide selection metrics or
+agent context: it submits only an owned view ID, exact time range, and visible series keys. The
+daemon reloads canonical blobs, limits the range to 1,024 observations, derives the summary, and
+writes it to the owned session log before it can be used in a prompt. Pi receives the bounded
+summary and portable view reference, never the raw series through the selection command. Forged,
+out-of-range, mixed-unit, unavailable-series, and cross-session selections fail closed.
+
 ## Non-goals
 
 The initial release does not defend against a deliberately malicious local user or provide an

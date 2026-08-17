@@ -26,3 +26,6 @@ are tracked independently from package versions.
 - Atomically published content-addressed view/blob resources with ownership-bound read APIs and
   fixed JSON size limits.
 - Real OHLC, trade, net-equity, drawdown, metric, and provenance projection in the Web canvas.
+- One synchronized chart viewport with crosshair, selection, zoom, pan, and origin de-duplication.
+- Ownership-bound chart selections with daemon-derived summaries and a bounded Raw Pi context
+  round trip.

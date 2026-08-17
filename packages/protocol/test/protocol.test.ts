@@ -9,11 +9,14 @@ import {
   isLoomBacktestView,
   isLoomBlobRecord,
   isLoomCancelTaskRequest,
+  isLoomCreateSelectionRequest,
   isLoomCreateSessionRequest,
   isLoomEventEnvelope,
   isLoomPiRuntimeDescriptor,
   isLoomPortableId,
   isLoomPublishedViewDescriptor,
+  isLoomSelection,
+  isLoomSelectionCreatedPayload,
   isLoomSendMessageRequest,
   LOOM_PROFILE_DESCRIPTORS,
   LoomAssuranceSchema,
@@ -102,7 +105,11 @@ describe("Loom command protocol", () => {
       }),
     ).toBe(true);
     expect(
-      isLoomSendMessageRequest({ format: "loom.message.send.v0", content: "Inspect it." }),
+      isLoomSendMessageRequest({
+        format: "loom.message.send.v0",
+        content: "Inspect it.",
+        selectionId: "selection_1",
+      }),
     ).toBe(true);
     expect(isLoomCancelTaskRequest({ format: "loom.task.cancel.v0" })).toBe(true);
     expect(
@@ -112,6 +119,7 @@ describe("Loom command protocol", () => {
         projectId: "project-1",
         sessionId: "session-1",
         taskId: "task-1",
+        selectionId: "selection_1",
       }),
     ).toBe(true);
   });
@@ -153,6 +161,73 @@ describe("Loom command protocol", () => {
     };
     expect(isLoomPiRuntimeDescriptor(runtime)).toBe(true);
     expect(isLoomPiRuntimeDescriptor({ ...runtime, apiKey: "must-not-leak" })).toBe(false);
+  });
+});
+
+describe("Loom selection protocol", () => {
+  const from = { epoch: "1700000000000", unit: "ms" } as const;
+  const until = { epoch: "1700086400000", unit: "ms" } as const;
+  const request = {
+    format: "loom.selection.create.v0",
+    viewId: `view_${"a".repeat(64)}`,
+    from,
+    until,
+    seriesKeys: ["equity", "drawdown"] as const,
+  };
+  const selection = {
+    format: "loom.selection.v0",
+    selectionId: "selection_1",
+    projectId: "project-a",
+    sessionId: "session-a",
+    viewId: request.viewId,
+    from,
+    until,
+    seriesKeys: ["equity", "drawdown"],
+    visibleSummary: [
+      selectionMetric("selection.net_return", "Net return", 0.01),
+      selectionMetric("selection.max_drawdown", "Maximum drawdown", -0.02),
+    ],
+    createdAt: "2026-08-18T00:00:00.000Z",
+  };
+
+  it("accepts an exact range request and daemon-derived selection record", () => {
+    expect(isLoomCreateSelectionRequest(request)).toBe(true);
+    expect(isLoomSelection(selection)).toBe(true);
+    expect(
+      isLoomSelectionCreatedPayload({
+        format: "loom.selection-created.v0",
+        commandId: "command-1",
+        selection,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects injected summaries, mixed units, duplicate series, and forged metric scope", () => {
+    expect(isLoomCreateSelectionRequest({ ...request, visibleSummary: [] })).toBe(false);
+    expect(isLoomCreateSelectionRequest({ ...request, until: { ...until, unit: "us" } })).toBe(
+      false,
+    );
+    expect(isLoomCreateSelectionRequest({ ...request, seriesKeys: ["equity", "equity"] })).toBe(
+      false,
+    );
+    expect(
+      isLoomSelection({
+        ...selection,
+        visibleSummary: [
+          { ...selection.visibleSummary[0], sampleScope: "full-sample" },
+          selection.visibleSummary[1],
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isLoomSelection({
+        ...selection,
+        visibleSummary: [
+          selectionMetric("selection.market_return", "Market return", 0.01),
+          selection.visibleSummary[1],
+        ],
+      }),
+    ).toBe(false);
   });
 });
 
@@ -377,5 +452,17 @@ function reference(
     key,
     itemCount,
     byteLength: 100,
+  };
+}
+
+function selectionMetric(key: string, label: string, value: number) {
+  return {
+    key,
+    label,
+    value,
+    unit: "ratio" as const,
+    scale: "percent" as const,
+    sampleScope: "selection" as const,
+    method: { id: "selected-range-v0", description: "Computed over the selected range." },
   };
 }

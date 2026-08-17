@@ -1,11 +1,15 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LoomEventEnvelope } from "@veilquant/loom-protocol";
+import type { LoomEventEnvelope, LoomSelection } from "@veilquant/loom-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionEventStoreRegistry } from "../src/event-store.js";
 import { publishedViewFromToolResult } from "../src/pi/loom-extension.js";
-import { RawPiRuntimeAdapter, type RuntimeAdapterError } from "../src/runtime-adapter.js";
+import {
+  buildPiPrompt,
+  RawPiRuntimeAdapter,
+  type RuntimeAdapterError,
+} from "../src/runtime-adapter.js";
 import { createDefaultRuntimeHost, LoomRuntimeHost } from "../src/runtime-host.js";
 
 describe("Raw Pi runtime adapter", () => {
@@ -91,6 +95,44 @@ describe("Raw Pi runtime adapter", () => {
     expect(JSON.stringify(events)).not.toContain("arguments");
     expect(JSON.stringify(events)).not.toContain("committed daily-factor reference view is ready");
     expect(JSON.stringify(events)).not.toContain("1704153600000");
+  });
+
+  it("adds only a portable daemon summary to a selection-aware Pi prompt", () => {
+    const selection: LoomSelection = {
+      format: "loom.selection.v0",
+      selectionId: "selection_one",
+      projectId: "project-a",
+      sessionId: "session-a",
+      viewId: `view_${"a".repeat(64)}`,
+      from: { epoch: "1700000000000", unit: "ms" },
+      until: { epoch: "1700086400000", unit: "ms" },
+      seriesKeys: ["drawdown"],
+      visibleSummary: [
+        {
+          key: "selection.max_drawdown",
+          label: "Maximum drawdown",
+          value: -0.02,
+          unit: "ratio",
+          scale: "percent",
+          sampleScope: "selection",
+          method: {
+            id: "selected_range.v0",
+            description: "Lowest drawdown observation in the selected range.",
+          },
+        },
+      ],
+      createdAt: "2026-08-18T00:00:00.000Z",
+    };
+    const prompt = buildPiPrompt("Why did this draw down?", selection);
+    expect(prompt).toContain("loom.selection-context.v0");
+    expect(prompt).toContain(selection.selectionId);
+    expect(prompt).toContain(selection.viewId);
+    expect(prompt).toContain("Why did this draw down?");
+    expect(prompt).not.toContain("project-a");
+    expect(prompt).not.toContain("session-a");
+    expect(prompt).not.toContain('"points"');
+    expect(prompt).not.toContain('"trades"');
+    expect(buildPiPrompt("Plain request", undefined)).toBe("Plain request");
   });
 
   it("cancels a paced provider through Pi's AbortSignal without reporting completion", async () => {

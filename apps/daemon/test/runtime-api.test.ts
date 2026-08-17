@@ -6,6 +6,7 @@ import {
   isLoomBacktestView,
   isLoomBlobRecord,
   isLoomPublishedViewDescriptor,
+  isLoomSelectionCreatedPayload,
   type LoomAcceptedCommandResponse,
   LoomErrorResponseSchema,
   LoomEventsResponseSchema,
@@ -100,7 +101,59 @@ describe("Raw Pi command API", () => {
       { headers },
     );
     expect(blobResponse.status).toBe(200);
-    expect(isLoomBlobRecord(await blobResponse.json())).toBe(true);
+    const marketRecord: unknown = await blobResponse.json();
+    expect(isLoomBlobRecord(marketRecord)).toBe(true);
+    if (
+      !isLoomBlobRecord(marketRecord) ||
+      marketRecord.content.format !== "loom.series.v0" ||
+      marketRecord.content.kind !== "ohlcv"
+    ) {
+      throw new Error("Expected market points");
+    }
+
+    const selectionResponse = await command(
+      `/v0/sessions/${createCommand.sessionId}/selections?projectId=project-a`,
+      {
+        format: "loom.selection.create.v0",
+        viewId: viewBody.viewId,
+        from: marketRecord.content.points[4]?.time,
+        until: marketRecord.content.points[7]?.time,
+        seriesKeys: ["equity", "drawdown", "trades"],
+      },
+    );
+    expect(selectionResponse.response.status).toBe(202);
+    const selectionCommand = requireAccepted(selectionResponse.body);
+    expect(selectionCommand.selectionId).toMatch(/^selection_/);
+
+    const asked = await command(
+      `/v0/sessions/${createCommand.sessionId}/messages?projectId=project-a`,
+      {
+        format: "loom.message.send.v0",
+        content: "Why did this interval draw down?",
+        selectionId: selectionCommand.selectionId,
+      },
+    );
+    expect(asked.response.status).toBe(202);
+    await runtimeHost.waitForIdle("project-a", createCommand.sessionId);
+    const finalEvents = await (
+      await eventStores.get("project-a", createCommand.sessionId)
+    ).replay();
+    const selectionEvent = finalEvents.find(
+      (event) => event.type === "selection.created" && isLoomSelectionCreatedPayload(event.payload),
+    );
+    expect(selectionEvent?.payload).toMatchObject({
+      selection: { selectionId: selectionCommand.selectionId },
+    });
+    expect(finalEvents).toContainEqual(
+      expect.objectContaining({
+        type: "message.user_appended",
+        payload: expect.objectContaining({
+          content: "Why did this interval draw down?",
+          selectionId: selectionCommand.selectionId,
+        }),
+      }),
+    );
+    expect(finalEvents.filter((event) => event.type === "view.published")).toHaveLength(1);
 
     const wrongSession = await app.request(
       `/v0/views/${viewBody.viewId}?projectId=project-a&sessionId=another-session`,
@@ -142,6 +195,39 @@ describe("Raw Pi command API", () => {
     });
     expect(missing.response.status).toBe(404);
     expect(missing.body).toMatchObject({ code: "SESSION_NOT_FOUND" });
+  });
+
+  it("rejects browser-supplied summaries and unknown selection context", async () => {
+    const injected = await command("/v0/sessions/session-a/selections?projectId=project-a", {
+      format: "loom.selection.create.v0",
+      viewId: `view_${"a".repeat(64)}`,
+      from: { epoch: "1", unit: "ms" },
+      until: { epoch: "2", unit: "ms" },
+      seriesKeys: ["equity"],
+      visibleSummary: [{ key: "forged", value: 99 }],
+    });
+    expect(injected.response.status).toBe(400);
+    expect(injected.body).toMatchObject({ code: "INVALID_REQUEST" });
+
+    const created = requireAccepted(
+      (
+        await command("/v0/projects/project-a/sessions", {
+          format: "loom.session.create.v0",
+          profile: "raw-pi",
+        })
+      ).body,
+    );
+    sessions.push(created.sessionId);
+    const unknown = await command(
+      `/v0/sessions/${created.sessionId}/messages?projectId=project-a`,
+      {
+        format: "loom.message.send.v0",
+        content: "Inspect this.",
+        selectionId: "selection_missing",
+      },
+    );
+    expect(unknown.response.status).toBe(404);
+    expect(unknown.body).toMatchObject({ code: "SELECTION_NOT_FOUND" });
   });
 
   it("applies the daemon Origin and cookie gate before any mutation", async () => {

@@ -74,6 +74,29 @@ closes the connection and explicitly requests replay after 10.
 Chart series are referenced as immutable blobs rather than repeated in an unbounded event log. A
 `view.published` event carries an exact `loom.view-published.v0` descriptor, not series values.
 
+## Chart selections
+
+The browser creates selection context with:
+
+```text
+POST /v0/sessions/:sessionId/selections?projectId=:projectId
+```
+
+The exact `loom.selection.create.v0` body contains `viewId`, `from`, `until`, and one or more visible
+`seriesKeys`. It has no summary field. Unknown fields, mixed time units, duplicate keys, non-series
+endpoints, ranges outside the owned view, and ranges larger than 1,024 market observations are
+rejected.
+
+The daemon recomputes a `loom.selection.v0` record from canonical blobs and durably publishes it in
+an exact `loom.selection-created.v0` payload. Its `visibleSummary` metrics use
+`sampleScope: "selection"`; ordinary backtest metrics remain `full-sample`. The record is bound to
+project, session, and view and carries no raw series values. A successful command receipt includes
+the selection ID.
+
+To ground a later prompt, `loom.message.send.v0` may include that selection ID. The daemon resolves
+it from the owned durable log and supplies Pi with only the portable view reference, range, and
+daemon-derived summary. An unknown or cross-session ID returns `SELECTION_NOT_FOUND`.
+
 ## Backtest views
 
 The first adapter boundary is `loom.backtest-import.v0`. It requires one time unit across ordered
@@ -111,14 +134,16 @@ Mutations use exact, versioned JSON bodies and return `202 Accepted` with a gene
 ```text
 POST /v0/projects/:projectId/sessions
 POST /v0/sessions/:sessionId/messages?projectId=:projectId
+POST /v0/sessions/:sessionId/selections?projectId=:projectId
 POST /v0/sessions/:sessionId/tasks/:taskId/cancel?projectId=:projectId
 ```
 
-The corresponding body formats are `loom.session.create.v0`, `loom.message.send.v0`, and
-`loom.task.cancel.v0`. Unknown fields, blank messages, oversized bodies, non-portable IDs, and
-unavailable profiles fail closed. A successful response uses `loom.command.accepted.v0`; a message
-or cancellation response also carries the task ID. Completion never depends on the HTTP connection:
-it is reported by the ordered event stream.
+The corresponding body formats are `loom.session.create.v0`, `loom.message.send.v0`,
+`loom.selection.create.v0`, and `loom.task.cancel.v0`. Unknown fields, blank messages, oversized
+bodies, non-portable IDs, and unavailable profiles fail closed. A successful response uses
+`loom.command.accepted.v0`; message and cancellation responses carry a task ID, while selection
+creation carries a selection ID. Completion never depends on the HTTP connection: it is reported by
+the ordered event stream.
 
 The Raw Pi adapter maps public text deltas, assistant completion, and coarse tool/task state. It does
 not expose model thinking, tool arguments, tool result bodies, or provider diagnostics. The

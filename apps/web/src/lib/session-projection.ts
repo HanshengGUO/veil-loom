@@ -1,9 +1,11 @@
 import {
   isLoomPiRuntimeDescriptor,
   isLoomPublishedViewDescriptor,
+  isLoomSelectionCreatedPayload,
   type LoomEventEnvelope,
   type LoomPiRuntimeDescriptor,
   type LoomPublishedViewDescriptor,
+  type LoomSelection,
   type LoomSessionProfile,
 } from "@veilquant/loom-protocol";
 
@@ -50,6 +52,7 @@ export interface SessionProjection {
   conversation: readonly ConversationEntry[];
   tasks: readonly TaskProjection[];
   activeView: ViewProjection | undefined;
+  activeSelection: LoomSelection | undefined;
   lastActivity: string | undefined;
   issue: SessionStreamIssue | undefined;
 }
@@ -74,6 +77,7 @@ export function createSessionProjection(projectId: string, sessionId: string): S
     conversation: [],
     tasks: [],
     activeView: undefined,
+    activeSelection: undefined,
     lastActivity: undefined,
     issue: undefined,
   };
@@ -234,9 +238,30 @@ export function applySessionEvent(
     }
     case "view.superseded":
       if (stringField(event.payload.viewId) === next.activeView?.viewId) {
-        next = { ...next, activeView: undefined };
+        next = { ...next, activeView: undefined, activeSelection: undefined };
       }
       break;
+    case "selection.created": {
+      if (!isLoomSelectionCreatedPayload(event.payload)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The stream returned an invalid selection record.",
+        });
+      }
+      const selection = event.payload.selection;
+      if (
+        selection.projectId !== state.projectId ||
+        selection.sessionId !== state.sessionId ||
+        selection.viewId !== next.activeView?.viewId
+      ) {
+        return rejected(state, {
+          kind: "ownership",
+          message: "The stream returned a selection for another research view.",
+        });
+      }
+      next = { ...next, activeSelection: selection };
+      break;
+    }
     case "tool.started":
     case "tool.progress":
     case "tool.completed":

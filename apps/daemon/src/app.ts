@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
   isLoomCancelTaskRequest,
+  isLoomCreateSelectionRequest,
   isLoomCreateSessionRequest,
   isLoomPortableId,
   isLoomSendMessageRequest,
@@ -23,6 +24,7 @@ import {
 import { RuntimeAdapterError } from "./runtime-adapter.js";
 import { createDefaultRuntimeHost, type LoomRuntimeHost } from "./runtime-host.js";
 import { DaemonSecurity } from "./security.js";
+import { SelectionService, SelectionServiceError } from "./selection-service.js";
 import { resolveLoomStateRoot } from "./state-root.js";
 
 const DAEMON_VERSION = "0.0.0";
@@ -31,6 +33,7 @@ export interface LoomAppOptions {
   eventStores?: SessionEventStoreRegistry;
   artifacts?: ResearchArtifactStore;
   runtimeHost?: LoomRuntimeHost;
+  selections?: SelectionService;
   security?: DaemonSecurity;
 }
 
@@ -40,11 +43,13 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
   const eventStores = options.eventStores ?? new SessionEventStoreRegistry({ stateRoot });
   const artifacts =
     options.artifacts ?? new ResearchArtifactStore({ stateRoot: eventStores.stateRoot });
+  const selections = options.selections ?? new SelectionService({ artifacts, eventStores });
   const runtimeHost =
     options.runtimeHost ??
     createDefaultRuntimeHost({
       eventStores,
       artifacts,
+      selections,
       cwd: process.cwd(),
       agentDir: join(stateRoot, "pi"),
     });
@@ -139,7 +144,21 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
         projectId,
         sessionId,
         content: request.content,
+        ...(request.selectionId === undefined ? {} : { selectionId: request.selectionId }),
       });
+      return context.json(response, 202);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.post("/v0/sessions/:sessionId/selections", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sessionId = requireSessionId(context.req.param("sessionId"));
+      const request = await readJsonBody(context.req.raw);
+      if (!isLoomCreateSelectionRequest(request)) throw new RequestValidationError();
+      const response = await selections.create({ projectId, sessionId, request });
       return context.json(response, 202);
     } catch (error) {
       return eventErrorResponse(error);
@@ -435,6 +454,13 @@ function eventErrorResponse(error: unknown): Response {
       code = "VIEW_UNAVAILABLE";
       message = "The research view is unavailable";
     }
+  } else if (error instanceof SelectionServiceError) {
+    code = error.code;
+    status = error.code === "SELECTION_NOT_FOUND" ? 404 : 400;
+    message =
+      error.code === "SELECTION_NOT_FOUND"
+        ? "The selection was not found"
+        : "The selection range is invalid";
   } else if (error instanceof SessionEventStoreError) {
     if (error.code === "INVALID_ID" || error.code === "INVALID_CURSOR") {
       status = 400;

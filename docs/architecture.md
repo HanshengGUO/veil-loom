@@ -70,8 +70,24 @@ leave an unreferenced immutable object, but it cannot expose a partial view.
 
 The event log contains only `loom.view-published.v0` metadata. The browser uses that durable
 descriptor to request the view and each referenced blob, checks their schemas and ownership again,
-and renders a static chart projection. Linked viewports and selection are deliberately separate from
-this storage boundary.
+and renders the chart projection. Linked interaction remains separate from this storage boundary.
+
+## Synchronized selection
+
+Market, equity, and drawdown charts consume one browser-side viewport state. It owns the visible
+range, crosshair, selected range, series resolution, and the origin of each zoom or pan. Origin IDs
+are remembered for a bounded window so a chart cannot feed a reflected update back into the
+controller and create an interaction loop.
+
+A browser selection is only a request over an owned view: view ID, exact range endpoints, and the
+visible series keys. The daemon reloads the canonical resources, verifies the time unit, domain,
+endpoint alignment, ownership, requested series, and 1,024-point limit, then derives market return,
+net return, maximum drawdown, and execution count as applicable. It appends the exact
+`selection.created` event before acknowledging the command.
+
+Pi receives a portable view reference, selected range, and the daemon-derived metrics. It does not
+receive the underlying series through this path. The public user event keeps the original question
+and selection ID; raw chart data and hidden model context do not enter the event log.
 
 ## Event recovery
 

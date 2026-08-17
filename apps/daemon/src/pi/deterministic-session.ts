@@ -16,7 +16,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { LoomPiRuntimeDescriptor } from "@veilquant/loom-protocol";
+import type { LoomPiRuntimeDescriptor, LoomSelection } from "@veilquant/loom-protocol";
 import type { DailyFactorReferenceAdapter } from "../reference-backtest/reference-adapter.js";
 import {
   createLoomReferenceBacktestExtension,
@@ -29,9 +29,12 @@ export const LOOM_FIXTURE_PREAMBLE =
   "I’ll run the committed daily-factor reference backtest through Loom’s Pi extension.";
 export const LOOM_FIXTURE_FINAL =
   "The offline Raw Pi fixture published the reference view. It remains exploratory and unverified.";
+export const LOOM_FIXTURE_SELECTION_FINAL =
+  "The selected interval has been reviewed using Loom’s daemon-derived summary. The explanation remains exploratory and should be checked against the full research context.";
 
 export interface PiPromptFixture {
   taskId: string;
+  selection?: LoomSelection;
 }
 
 export interface HostedPiSession {
@@ -167,6 +170,12 @@ export class DeterministicPiSessionFactory implements PiSessionFactory {
               stopReason: "error",
               errorMessage: "Private fixture failure: provider diagnostics stay in the daemon",
             }),
+          ]);
+          return;
+        }
+        if (fixture.selection !== undefined) {
+          faux.setResponses([
+            fauxAssistantMessage(this.#options.finalText ?? LOOM_FIXTURE_SELECTION_FINAL),
           ]);
           return;
         }

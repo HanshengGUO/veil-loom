@@ -127,6 +127,7 @@ export function isLoomAssurance(input: unknown): input is LoomAssurance {
 }
 
 export const LOOM_SERIES_MAX_POINTS = 4_096;
+export const LOOM_SELECTION_MAX_POINTS = 1_024;
 export const LOOM_JSON_BLOB_MAX_BYTES = 256 * 1_024;
 export const LOOM_VIEW_MAX_TOTAL_BLOB_BYTES = 1_024 * 1_024;
 export const LOOM_VIEW_MAX_RECORD_BYTES = 64 * 1_024;
@@ -208,7 +209,7 @@ const LoomMetricCommon = {
     Type.Literal("percent"),
     Type.Literal("basis-points"),
   ]),
-  sampleScope: Type.Literal("full-sample"),
+  sampleScope: Type.Union([Type.Literal("full-sample"), Type.Literal("selection")]),
   method: LoomMetricMethodSchema,
   evidenceRef: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
 };
@@ -349,6 +350,7 @@ export function isLoomBacktestImport(input: unknown): input is LoomBacktestImpor
   if (
     input.metrics.some(
       (metric) =>
+        metric.sampleScope !== "full-sample" ||
         metric.label.trim().length === 0 ||
         metric.method.description.trim().length === 0 ||
         ("value" in metric && !Number.isFinite(metric.value)),
@@ -537,6 +539,7 @@ export function isLoomBacktestView(input: unknown): input is LoomBacktestView {
   if (input.timeRange.start.unit !== input.timeRange.end.unit) return false;
   if (compareLoomTime(input.timeRange.start, input.timeRange.end) > 0) return false;
   if (!unique(input.metrics.map((metric) => metric.key))) return false;
+  if (input.metrics.some((metric) => metric.sampleScope !== "full-sample")) return false;
   if (!unique(input.regions.map((region) => region.regionId))) return false;
   const references = [input.market, input.equity, input.drawdown, input.trades].filter(
     (reference): reference is LoomBlobReference => reference !== null,
@@ -588,6 +591,104 @@ export function isLoomPublishedViewDescriptor(
     isLoomAssurance(input.assurance) &&
     input.assurance.state === "exploratory"
   );
+}
+
+export const LoomSelectionSeriesKeySchema = Type.Union(
+  [
+    Type.Literal("market"),
+    Type.Literal("equity"),
+    Type.Literal("drawdown"),
+    Type.Literal("trades"),
+  ],
+  { $id: "LoomSelectionSeriesKey" },
+);
+export type LoomSelectionSeriesKey = Static<typeof LoomSelectionSeriesKeySchema>;
+
+export const LoomCreateSelectionRequestSchema = Type.Object(
+  {
+    format: Type.Literal("loom.selection.create.v0"),
+    viewId: LoomContentIdSchema,
+    from: LoomTimeSchema,
+    until: LoomTimeSchema,
+    seriesKeys: Type.Array(LoomSelectionSeriesKeySchema, { minItems: 1, maxItems: 4 }),
+  },
+  { additionalProperties: false, $id: "LoomCreateSelectionRequest" },
+);
+export type LoomCreateSelectionRequest = Static<typeof LoomCreateSelectionRequestSchema>;
+
+export function isLoomCreateSelectionRequest(input: unknown): input is LoomCreateSelectionRequest {
+  return (
+    Check(LoomCreateSelectionRequestSchema, input) &&
+    input.viewId.startsWith("view_") &&
+    input.from.unit === input.until.unit &&
+    compareLoomTime(input.from, input.until) <= 0 &&
+    unique(input.seriesKeys)
+  );
+}
+
+export const LoomSelectionSchema = Type.Object(
+  {
+    format: Type.Literal("loom.selection.v0"),
+    selectionId: Type.String({ pattern: "^selection_[A-Za-z0-9._-]{1,118}$" }),
+    projectId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    sessionId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    viewId: LoomContentIdSchema,
+    from: LoomTimeSchema,
+    until: LoomTimeSchema,
+    seriesKeys: Type.Array(LoomSelectionSeriesKeySchema, { minItems: 1, maxItems: 4 }),
+    visibleSummary: Type.Array(LoomMetricSchema, { minItems: 1, maxItems: 4 }),
+    createdAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false, $id: "LoomSelection" },
+);
+export type LoomSelection = Static<typeof LoomSelectionSchema>;
+
+const SELECTION_METRIC_KEYS: Readonly<Record<LoomSelectionSeriesKey, string>> = {
+  market: "selection.market_return",
+  equity: "selection.net_return",
+  drawdown: "selection.max_drawdown",
+  trades: "selection.execution_count",
+};
+
+export function isLoomSelection(input: unknown): input is LoomSelection {
+  if (!Check(LoomSelectionSchema, input)) return false;
+  if (!input.viewId.startsWith("view_") || !isCanonicalIsoTime(input.createdAt)) return false;
+  if (input.from.unit !== input.until.unit || compareLoomTime(input.from, input.until) > 0) {
+    return false;
+  }
+  if (!unique(input.seriesKeys) || !unique(input.visibleSummary.map((metric) => metric.key))) {
+    return false;
+  }
+  const expectedMetricKeys = input.seriesKeys.map((key) => SELECTION_METRIC_KEYS[key]).sort();
+  const actualMetricKeys = input.visibleSummary.map((metric) => metric.key).sort();
+  return (
+    expectedMetricKeys.length === actualMetricKeys.length &&
+    expectedMetricKeys.every((key, index) => key === actualMetricKeys[index]) &&
+    input.visibleSummary.every(
+      (metric) =>
+        metric.sampleScope === "selection" &&
+        "value" in metric &&
+        Number.isFinite(metric.value) &&
+        metric.label.trim().length > 0 &&
+        metric.method.description.trim().length > 0,
+    )
+  );
+}
+
+export const LoomSelectionCreatedPayloadSchema = Type.Object(
+  {
+    format: Type.Literal("loom.selection-created.v0"),
+    commandId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+    selection: LoomSelectionSchema,
+  },
+  { additionalProperties: false, $id: "LoomSelectionCreatedPayload" },
+);
+export type LoomSelectionCreatedPayload = Static<typeof LoomSelectionCreatedPayloadSchema>;
+
+export function isLoomSelectionCreatedPayload(
+  input: unknown,
+): input is LoomSelectionCreatedPayload {
+  return Check(LoomSelectionCreatedPayloadSchema, input) && isLoomSelection(input.selection);
 }
 
 export const LoomHealthResponseSchema = Type.Object(
@@ -660,6 +761,7 @@ export const LoomSendMessageRequestSchema = Type.Object(
   {
     format: Type.Literal("loom.message.send.v0"),
     content: Type.String({ minLength: 1, maxLength: 32_768 }),
+    selectionId: Type.Optional(Type.String({ pattern: "^selection_[A-Za-z0-9._-]{1,118}$" })),
   },
   { additionalProperties: false, $id: "LoomSendMessageRequest" },
 );
@@ -688,6 +790,7 @@ export const LoomAcceptedCommandResponseSchema = Type.Object(
     projectId: LoomPortableIdSchema,
     sessionId: LoomPortableIdSchema,
     taskId: Type.Optional(LoomPortableIdSchema),
+    selectionId: Type.Optional(Type.String({ pattern: "^selection_[A-Za-z0-9._-]{1,118}$" })),
   },
   { additionalProperties: false, $id: "LoomAcceptedCommandResponse" },
 );
@@ -789,6 +892,8 @@ export const LoomErrorCodeSchema = Type.Union(
     Type.Literal("VIEW_NOT_FOUND"),
     Type.Literal("BLOB_NOT_FOUND"),
     Type.Literal("VIEW_UNAVAILABLE"),
+    Type.Literal("SELECTION_NOT_FOUND"),
+    Type.Literal("SELECTION_INVALID"),
     Type.Literal("INTERNAL_ERROR"),
   ],
   { $id: "LoomErrorCode" },

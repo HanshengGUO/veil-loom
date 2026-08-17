@@ -3,6 +3,7 @@
 import {
   LOOM_PROFILE_DESCRIPTORS,
   type LoomCapability,
+  type LoomSelection,
   type LoomSessionProfile,
   RAW_PI_PROFILE,
 } from "@veilquant/loom-protocol";
@@ -179,7 +180,7 @@ export function WorkspaceShell() {
           <div className="border-t border-[var(--border)] p-4">
             <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-black/20 p-2 pl-4">
               <span className="flex-1 text-sm text-slate-500">
-                Interactive composer arrives after the command fixture…
+                Select a chart interval to ask Pi with grounded context.
               </span>
               <button
                 className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-slate-500"
@@ -214,7 +215,13 @@ export function WorkspaceShell() {
             </span>
           </div>
 
-          <CanvasContent state={backtestView} />
+          <CanvasContent
+            activeSelection={projection.activeSelection}
+            daemonOrigin={DAEMON_ORIGIN}
+            projectId={DEMO_PROJECT_ID}
+            sessionId={DEMO_SESSION_ID}
+            state={backtestView}
+          />
 
           <div className="border-t border-[var(--border)] px-5 py-3">
             <p
@@ -303,8 +310,31 @@ function streamDescription(connection: BrowserConnectionState, issue: string | u
   return "Opening the deterministic offline Pi event stream…";
 }
 
-function CanvasContent({ state }: Readonly<{ state: BacktestViewState }>) {
-  if (state.status === "ready") return <BacktestCanvas resources={state.resources} />;
+function CanvasContent({
+  state,
+  activeSelection,
+  daemonOrigin,
+  projectId,
+  sessionId,
+}: Readonly<{
+  state: BacktestViewState;
+  activeSelection: LoomSelection | undefined;
+  daemonOrigin: string;
+  projectId: string;
+  sessionId: string;
+}>) {
+  if (state.status === "ready") {
+    return (
+      <BacktestCanvas
+        activeSelection={activeSelection}
+        daemonOrigin={daemonOrigin}
+        key={state.resources.view.viewId}
+        projectId={projectId}
+        resources={state.resources}
+        sessionId={sessionId}
+      />
+    );
+  }
   const message = {
     waiting: "Waiting for a validated backtest view…",
     loading: "Loading content-addressed chart resources…",

@@ -8,8 +8,8 @@ honest. Raw Pi sessions can chat, code, run local tools, and publish interactive
 Veil sessions add guarded data, promotion contracts, statistical gates, Experiment memory, and
 reproduction.
 
-> Status: pre-alpha with durable replay, a real Pi host, and a validated daily-factor reference
-> view rendered from content-addressed resources. The model path remains fully offline, and nothing
+> Status: pre-alpha with durable replay, a real Pi host, synchronized backtest charts, and bounded
+> chart selections that can be sent back to Pi. The model path remains fully offline, and nothing
 > is published to npm.
 
 ## Session profiles
@@ -76,9 +76,13 @@ bootstrap and receives an HttpOnly daemon-session cookie; no token needs to be c
 placed in a URL. The daemon listens at `http://127.0.0.1:43120` by default.
 
 The Web app loads the owned view resources and renders actual OHLC bars, execution markers, net
-equity, drawdown, metrics, and provenance. This is a deterministic import fixture, not a general
-backtest engine, and it does not contact a model service. Its result is always marked
-**EXPLORATORY · UNVERIFIED**. Synchronized interaction and selection grounding come next.
+equity, drawdown, metrics, and provenance. Both charts share one crosshair, time range, zoom, pan,
+and selection. Drag a range or choose the maximum-drawdown window, create a bounded selection
+context, then ask Pi about it. The browser sends only the view ID, time range, and visible series
+keys; the daemon validates ownership and recomputes the summary from canonical resources.
+
+This is a deterministic import fixture, not a general backtest engine, and it does not contact a
+model service. Every result remains **EXPLORATORY · UNVERIFIED**.
 
 ## Initial milestone
 
@@ -88,7 +92,7 @@ The first vertical slice is taking one deterministic daily-factor example end to
 2. create a Raw Pi or Veil session;
 3. render market, equity, drawdown, trades, and explicit assurance — implemented for the reference
    adapter;
-4. send a selected chart range back to Pi;
+4. send a selected chart range back to Pi — implemented for the live offline fixture;
 5. create a fresh Veil verification attempt;
 6. inspect the Experiment and reproduce it.
 

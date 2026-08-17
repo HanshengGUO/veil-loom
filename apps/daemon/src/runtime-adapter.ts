@@ -4,6 +4,7 @@ import {
   type LoomAcceptedCommandResponse,
   type LoomPiRuntimeDescriptor,
   type LoomProfileDescriptor,
+  type LoomSelection,
   RAW_PI_PROFILE,
 } from "@veilquant/loom-protocol";
 import type { SessionEventStore, SessionEventStoreRegistry } from "./event-store.js";
@@ -53,6 +54,7 @@ export interface SendMessageInput {
   taskId: string;
   messageId: string;
   content: string;
+  selection?: LoomSelection;
 }
 
 export interface CancelTaskInput {
@@ -244,6 +246,7 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
           messageId: input.messageId,
           commandId: input.commandId,
           content: input.content,
+          ...(input.selection === undefined ? {} : { selectionId: input.selection.selectionId }),
         },
       });
       await state.store.append({
@@ -265,7 +268,7 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
       throw error;
     }
 
-    task.runPromise = this.#runTask(state, task, input.content);
+    task.runPromise = this.#runTask(state, task, input.content, input.selection);
     void task.runPromise.catch(() => undefined);
     return accepted(input);
   }
@@ -331,7 +334,12 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
     return state;
   }
 
-  async #runTask(state: RuntimeState, task: ActiveTask, content: string): Promise<void> {
+  async #runTask(
+    state: RuntimeState,
+    task: ActiveTask,
+    content: string,
+    selection: LoomSelection | undefined,
+  ): Promise<void> {
     const unsubscribe = state.pi.session.subscribe((event) => {
       task.projectionQueue = task.projectionQueue
         .then(async () => {
@@ -345,8 +353,11 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
     let promptError: unknown;
 
     try {
-      state.pi.preparePrompt({ taskId: task.id });
-      await state.pi.session.prompt(content);
+      state.pi.preparePrompt({
+        taskId: task.id,
+        ...(selection === undefined ? {} : { selection }),
+      });
+      await state.pi.session.prompt(buildPiPrompt(content, selection));
     } catch (error) {
       promptError = error;
     }
@@ -480,6 +491,29 @@ export class RawPiRuntimeAdapter implements LoomRuntimeAdapter {
       }
     }
   }
+}
+
+/** Adds bounded daemon-owned selection context without exposing the underlying series. */
+export function buildPiPrompt(content: string, selection: LoomSelection | undefined): string {
+  if (selection === undefined) return content;
+  const context = {
+    format: "loom.selection-context.v0",
+    selectionId: selection.selectionId,
+    view: {
+      format: "loom.backtest-view.v0",
+      viewId: selection.viewId,
+    },
+    range: { from: selection.from, until: selection.until },
+    visibleSummary: selection.visibleSummary,
+  };
+  return [
+    "Use the following daemon-derived Loom selection context. It is a bounded summary, not raw research data.",
+    "<loom_selection_context>",
+    JSON.stringify(context),
+    "</loom_selection_context>",
+    "",
+    content,
+  ].join("\n");
 }
 
 function accepted(input: {

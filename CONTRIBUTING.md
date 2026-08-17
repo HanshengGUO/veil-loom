@@ -23,6 +23,8 @@ requests in English.
 - Raw Pi output is always exploratory.
 - Accepted, degraded, and rejected assurance can only be derived from verified Veil evidence.
 - Adding a backtest adapter requires a deterministic fixture and failure tests.
+- Browser-supplied selection metrics are untrusted; summaries must be derived from owned daemon
+  resources and remain bounded.
 - Pi SDK upgrades must keep `npm audit` clean and preserve the public event redaction tests.
 
 Before opening a pull request, describe which boundary the change touches and whether documentation

@@ -25,10 +25,11 @@ describe("session projection reducer", () => {
           limitations: ["Not independently verified"],
         },
       }),
-      event(5, "message.assistant_delta", { messageId: "assistant-1", delta: "Done" }),
-      event(6, "message.assistant_completed", { messageId: "assistant-1" }),
-      event(7, "task.completed", { taskId: "task-1" }),
-      event(8, "session.ready", {
+      event(5, "selection.created", selectionPayload()),
+      event(6, "message.assistant_delta", { messageId: "assistant-1", delta: "Done" }),
+      event(7, "message.assistant_completed", { messageId: "assistant-1" }),
+      event(8, "task.completed", { taskId: "task-1" }),
+      event(9, "session.ready", {
         runtime: {
           format: "loom.pi-runtime.v0",
           package: "@earendil-works/pi-coding-agent",
@@ -46,11 +47,12 @@ describe("session projection reducer", () => {
     }
 
     expect(state).toMatchObject({
-      lastSequence: 8,
+      lastSequence: 9,
       profile: "raw-pi",
       status: "ready",
       runtime: { provider: "loom-offline-fixture", model: "loom-fixture-v0" },
       activeView: { viewId: `view_${"a".repeat(64)}`, title: "Daily factor" },
+      activeSelection: { selectionId: "selection_one", viewId: `view_${"a".repeat(64)}` },
       conversation: [
         { id: "user-1", role: "user", content: "Run it" },
         { id: "assistant-1", role: "assistant", content: "Done", complete: true },
@@ -136,7 +138,77 @@ describe("session projection reducer", () => {
       state: { lastSequence: 0, activeView: undefined, issue: { kind: "protocol" } },
     });
   });
+
+  it("fails closed instead of projecting a forged selection summary", () => {
+    const viewState = applySessionEvent(
+      createSessionProjection("project-a", "session-a"),
+      event(1, "view.published", {
+        format: "loom.view-published.v0",
+        viewId: `view_${"a".repeat(64)}`,
+        viewFormat: "loom.backtest-view.v0",
+        kind: "backtest",
+        title: "Daily factor",
+        summary: "A validated exploratory view.",
+        taskId: "task-1",
+        assurance: {
+          format: "loom.assurance.v0",
+          state: "exploratory",
+          issuer: "loom",
+          evidenceRefs: [],
+          limitations: ["Not independently verified"],
+        },
+      }),
+    ).state;
+    const forged = selectionPayload();
+    const summary = forged.selection.visibleSummary[0];
+    const result = applySessionEvent(
+      viewState,
+      event(2, "selection.created", {
+        ...forged,
+        selection: {
+          ...forged.selection,
+          visibleSummary: [{ ...summary, sampleScope: "full-sample", value: 99 }],
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      outcome: "rejected",
+      state: { lastSequence: 1, activeSelection: undefined, issue: { kind: "protocol" } },
+    });
+  });
 });
+
+function selectionPayload() {
+  return {
+    format: "loom.selection-created.v0",
+    commandId: "command-selection",
+    selection: {
+      format: "loom.selection.v0",
+      selectionId: "selection_one",
+      projectId: "project-a",
+      sessionId: "session-a",
+      viewId: `view_${"a".repeat(64)}`,
+      from: { epoch: "1700000000000", unit: "ms" },
+      until: { epoch: "1700086400000", unit: "ms" },
+      seriesKeys: ["drawdown"],
+      visibleSummary: [
+        {
+          key: "selection.max_drawdown",
+          label: "Maximum drawdown",
+          value: -0.02,
+          unit: "ratio",
+          scale: "percent",
+          sampleScope: "selection",
+          method: {
+            id: "selected_range.v0",
+            description: "Lowest drawdown observation in the selected range.",
+          },
+        },
+      ],
+      createdAt: "2026-08-18T00:00:00.000Z",
+    },
+  };
+}
 
 function event(
   sequence: number,

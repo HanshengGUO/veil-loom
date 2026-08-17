@@ -6,6 +6,7 @@ import { SessionEventStoreRegistry } from "./event-store.js";
 import { ResearchArtifactStore } from "./research-artifacts.js";
 import { createDefaultRuntimeHost } from "./runtime-host.js";
 import { DaemonSecurity, resolveAllowedWebOrigin } from "./security.js";
+import { SelectionService } from "./selection-service.js";
 import { daemonServeOptions, LOOPBACK_HOST, parseDaemonPort } from "./server-config.js";
 import { resolveLoomStateRoot } from "./state-root.js";
 
@@ -13,9 +14,11 @@ const port = parseDaemonPort(process.env.LOOM_DAEMON_PORT);
 const stateRoot = resolveLoomStateRoot();
 const eventStores = new SessionEventStoreRegistry({ stateRoot });
 const artifacts = new ResearchArtifactStore({ stateRoot });
+const selections = new SelectionService({ artifacts, eventStores });
 const runtimeHost = createDefaultRuntimeHost({
   eventStores,
   artifacts,
+  selections,
   cwd: process.cwd(),
   agentDir: join(stateRoot, "pi"),
 });
@@ -27,7 +30,10 @@ const demoSessionEnabled = process.env.LOOM_DEMO_SESSION === "1";
 if (demoSessionEnabled) await seedDemoSession(eventStores, runtimeHost);
 
 serve(
-  daemonServeOptions(createLoomApp({ eventStores, artifacts, runtimeHost, security }).fetch, port),
+  daemonServeOptions(
+    createLoomApp({ eventStores, artifacts, runtimeHost, selections, security }).fetch,
+    port,
+  ),
 );
 
 process.stdout.write(

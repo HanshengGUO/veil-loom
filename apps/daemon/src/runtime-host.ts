@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   isLoomPortableId,
   type LoomAcceptedCommandResponse,
+  type LoomSelection,
   type LoomSessionProfile,
 } from "@veilquant/loom-protocol";
 import type { SessionEventStoreRegistry } from "./event-store.js";
@@ -16,6 +17,7 @@ import {
   RawPiRuntimeAdapter,
   RuntimeAdapterError,
 } from "./runtime-adapter.js";
+import { SelectionService } from "./selection-service.js";
 
 type RuntimeIdKind = "session" | "command" | "task" | "message";
 
@@ -23,6 +25,7 @@ export type RuntimeIdSource = (kind: RuntimeIdKind) => string;
 
 export interface RuntimeHostOptions {
   adapters: readonly LoomRuntimeAdapter[];
+  selections?: SelectionService;
   idSource?: RuntimeIdSource;
 }
 
@@ -36,6 +39,7 @@ export interface SendRuntimeMessageInput {
   projectId: string;
   sessionId: string;
   content: string;
+  selectionId?: string;
 }
 
 export interface CancelRuntimeTaskInput {
@@ -60,12 +64,14 @@ export class LoomRuntimeHost {
   readonly #adapters: Map<LoomSessionProfile, LoomRuntimeAdapter>;
   readonly #sessions = new Map<string, LoomRuntimeAdapter>();
   readonly #idSource: RuntimeIdSource;
+  readonly #selections: SelectionService | undefined;
 
   constructor(options: RuntimeHostOptions) {
     this.#adapters = new Map(
       options.adapters.map((adapter) => [adapter.descriptor.id, adapter] as const),
     );
     this.#idSource = options.idSource ?? defaultIdSource;
+    this.#selections = options.selections;
   }
 
   async createSession(
@@ -122,7 +128,25 @@ export class LoomRuntimeHost {
     for (const id of [input.projectId, input.sessionId, commandId, taskId, messageId]) {
       assertRuntimeId(id);
     }
-    return adapter.send({ ...input, commandId, taskId, messageId });
+    let selection: LoomSelection | undefined;
+    if (input.selectionId !== undefined) {
+      if (this.#selections === undefined) {
+        throw new RuntimeAdapterError("RUNTIME_UNAVAILABLE", "Selection context is unavailable");
+      }
+      selection = await this.#selections.resolve(
+        input.projectId,
+        input.sessionId,
+        input.selectionId,
+      );
+    }
+    const { selectionId: _selectionId, ...message } = input;
+    return adapter.send({
+      ...message,
+      commandId,
+      taskId,
+      messageId,
+      ...(selection === undefined ? {} : { selection }),
+    });
   }
 
   async cancelTask(
@@ -172,12 +196,15 @@ export interface DefaultRuntimeHostOptions {
   agentDir: string;
   fixture?: DeterministicPiSessionFactoryOptions;
   idSource?: RuntimeIdSource;
+  selections?: SelectionService;
 }
 
 export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): LoomRuntimeHost {
   const artifacts =
     options.artifacts ?? new ResearchArtifactStore({ stateRoot: options.eventStores.stateRoot });
   const referenceBacktests = new DailyFactorReferenceAdapter(artifacts);
+  const selections =
+    options.selections ?? new SelectionService({ artifacts, eventStores: options.eventStores });
   const rawPi = new RawPiRuntimeAdapter({
     eventStores: options.eventStores,
     sessionFactory: new DeterministicPiSessionFactory({ referenceBacktests }, options.fixture),
@@ -186,6 +213,7 @@ export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): Lo
   });
   return new LoomRuntimeHost({
     adapters: [rawPi],
+    selections,
     ...(options.idSource === undefined ? {} : { idSource: options.idSource }),
   });
 }
