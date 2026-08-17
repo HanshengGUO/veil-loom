@@ -70,6 +70,10 @@ the web app replays it into the conversation, task, connection, and view state. 
 rebuilds that state from event one; reconnects resume from the last event the reducer actually
 applied.
 
+Open the web app at its exact loopback address, `http://127.0.0.1:3000`. It performs an Origin-gated
+bootstrap and receives an HttpOnly daemon-session cookie; no token needs to be copied into the UI or
+placed in a URL. The daemon listens at `http://127.0.0.1:43120` by default.
+
 The chart shapes are still placeholders, and the demo does not run Pi or a backtest. Its purpose is
 to exercise ordering, recovery, profile freezing, and honest exploratory labels before local
 execution is enabled.

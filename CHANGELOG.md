@@ -16,3 +16,5 @@ are tracked independently from package versions.
 - Cursor-based JSON replay and reconnectable server-sent event streams.
 - Gap-aware browser projections with exact duplicate detection and explicit cursor recovery.
 - An idempotent durable Raw Pi demo session rendered in the dual-pane development shell.
+- Per-process 256-bit daemon sessions delivered through an Origin-gated HttpOnly cookie handshake.
+- Credentialed direct SSE, strict CORS responses, token rotation, and real loopback binding tests.

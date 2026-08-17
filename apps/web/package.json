@@ -7,8 +7,8 @@
   "license": "MIT",
   "scripts": {
     "build": "cross-env NEXT_TELEMETRY_DISABLED=1 next build",
-    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev --hostname 127.0.0.1",
-    "start": "cross-env NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1",
+    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev --hostname 127.0.0.1 --port 3000",
+    "start": "cross-env NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1 --port 3000",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

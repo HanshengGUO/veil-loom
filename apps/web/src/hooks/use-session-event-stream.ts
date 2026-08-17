@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { bootstrapDaemonSession } from "../lib/daemon-auth";
 import { type SessionConnectionState, SessionEventStream } from "../lib/session-event-stream";
 import { createSessionProjection, type SessionProjection } from "../lib/session-projection";
 
@@ -8,7 +9,7 @@ export type BrowserConnectionState = SessionConnectionState | { status: "disable
 
 export interface UseSessionEventStreamOptions {
   enabled: boolean;
-  basePath: string;
+  daemonOrigin: string;
   projectId: string;
   sessionId: string;
 }
@@ -34,9 +35,10 @@ export function useSessionEventStream(options: UseSessionEventStreamOptions): {
 
     let active = true;
     const stream = new SessionEventStream({
-      basePath: options.basePath,
+      basePath: options.daemonOrigin,
       projectId: options.projectId,
       sessionId: options.sessionId,
+      authorize: () => bootstrapDaemonSession(options.daemonOrigin),
       onProjection: (next) => {
         if (active) setProjection(next);
       },
@@ -49,7 +51,7 @@ export function useSessionEventStream(options: UseSessionEventStreamOptions): {
       active = false;
       stream.stop();
     };
-  }, [options.basePath, options.enabled, options.projectId, options.sessionId]);
+  }, [options.daemonOrigin, options.enabled, options.projectId, options.sessionId]);
 
   return { projection, connection };
 }

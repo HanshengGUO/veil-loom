@@ -8,6 +8,28 @@ import {
 import type { SessionProjection } from "../src/lib/session-projection";
 
 describe("session event stream", () => {
+  it("authenticates before opening and re-authenticates after disconnect", async () => {
+    let authorizations = 0;
+    const fixture = streamFixture({
+      authorize: async () => {
+        authorizations += 1;
+      },
+    });
+    fixture.stream.start();
+    expect(fixture.sources).toHaveLength(0);
+    await Promise.resolve();
+
+    expect(authorizations).toBe(1);
+    expect(fixture.sources[0]?.url).toContain("afterSequence=0");
+    fixture.sources[0]?.emit(event(1, "session.created", {}));
+    fixture.sources[0]?.emitError();
+    fixture.scheduler.runNext();
+    await Promise.resolve();
+
+    expect(authorizations).toBe(2);
+    expect(fixture.sources[1]?.url).toContain("afterSequence=1");
+  });
+
   it("reconnects from the last applied cursor after a network error", () => {
     const fixture = streamFixture();
     fixture.stream.start();
@@ -55,7 +77,7 @@ describe("session event stream", () => {
   });
 });
 
-function streamFixture() {
+function streamFixture(options: { authorize?: () => Promise<void> } = {}) {
   const sources: FakeEventSource[] = [];
   const projections: SessionProjection[] = [];
   const connections: Array<{ status: string; attempt: number }> = [];
@@ -66,6 +88,7 @@ function streamFixture() {
     sessionId: "session-a",
     onProjection: (projection) => projections.push(projection),
     onConnection: (connection) => connections.push(connection),
+    ...(options.authorize === undefined ? {} : { authorize: options.authorize }),
     eventSourceFactory: (url) => {
       const source = new FakeEventSource(url);
       sources.push(source);

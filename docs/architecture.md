@@ -20,6 +20,17 @@ The split is a security boundary, not a deployment preference. Local files, subp
 credentials, and Veil evidence remain in the daemon. The browser renders projections and submits
 bounded commands.
 
+## Local transport
+
+The Web app and daemon bind to fixed loopback addresses. Before opening protected routes, the
+browser sends an empty bootstrap POST from the configured exact Origin. The daemon returns a
+process-scoped secret only as an HttpOnly, SameSite session cookie and acknowledges the handshake
+with non-secret JSON. EventSource then connects directly to the daemon with credentials enabled.
+
+This avoids putting bearer material in JavaScript, local storage, query parameters, browser history,
+Referer headers, or Next.js proxy configuration. A daemon restart rotates the secret; reconnecting
+clients bootstrap again before resuming from their durable cursor.
+
 ## Profiles
 
 Raw Pi and Veil are profiles over one Pi host rather than unrelated backends. A session freezes its
@@ -58,9 +69,8 @@ State lives in the normal per-user application-state directory:
 ## Development fixture
 
 `npm run dev:daemon` enables one deterministic Raw Pi session. Seeding is idempotent across daemon
-restarts and refuses to overwrite a conflicting log. `npm run dev:web` exposes only that SSE route
-through a development-only loopback rewrite, avoiding a broad daemon proxy. Production builds do
-not include this rewrite or enable the demo stream.
+restarts and refuses to overwrite a conflicting log. `npm run dev:web` authenticates directly to the
+loopback daemon and renders its SSE projection. Production builds do not enable the demo stream.
 
 ## Dependency direction
 

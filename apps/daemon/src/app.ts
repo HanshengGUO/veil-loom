@@ -1,5 +1,6 @@
 import {
   LOOM_PROFILE_DESCRIPTORS,
+  type LoomAuthResponse,
   type LoomCapabilitiesResponse,
   type LoomErrorCode,
   type LoomErrorResponse,
@@ -9,18 +10,66 @@ import {
 } from "@veilquant/loom-protocol";
 import { Hono } from "hono";
 import { SessionEventStoreError, SessionEventStoreRegistry } from "./event-store.js";
+import { DaemonSecurity } from "./security.js";
 import { resolveLoomStateRoot } from "./state-root.js";
 
 const DAEMON_VERSION = "0.0.0";
 
 export interface LoomAppOptions {
   eventStores?: SessionEventStoreRegistry;
+  security?: DaemonSecurity;
 }
 
 export function createLoomApp(options: LoomAppOptions = {}): Hono {
   const app = new Hono();
   const eventStores =
     options.eventStores ?? new SessionEventStoreRegistry({ stateRoot: resolveLoomStateRoot() });
+  const security = options.security ?? new DaemonSecurity();
+
+  app.use("/v0/*", async (context, next) => {
+    const path = new URL(context.req.url).pathname;
+    const origin = context.req.header("Origin");
+
+    if (context.req.method === "OPTIONS") {
+      if (origin !== security.allowedOrigin) {
+        return securityErrorResponse("ORIGIN_FORBIDDEN", 403);
+      }
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders(origin, true),
+      });
+    }
+
+    if (path === "/v0/health" && origin === undefined) {
+      await next();
+      return;
+    }
+    if (origin !== security.allowedOrigin) {
+      return securityErrorResponse("ORIGIN_FORBIDDEN", 403);
+    }
+
+    if (path === "/v0/health") {
+      await next();
+      applyCorsHeaders(context, origin);
+      return;
+    }
+    if (path !== "/v0/auth/bootstrap" && !security.authorizes(context.req.header("Cookie"))) {
+      return securityErrorResponse("AUTH_REQUIRED", 401, origin);
+    }
+    await next();
+    applyCorsHeaders(context, origin);
+  });
+
+  app.post("/v0/auth/bootstrap", (context) => {
+    const response = {
+      format: "loom.auth.v0",
+      status: "ready",
+    } satisfies LoomAuthResponse;
+    context.header("Cache-Control", "no-store");
+    context.header("Pragma", "no-cache");
+    context.header("Set-Cookie", security.sessionCookie());
+    return context.json(response);
+  });
 
   app.get("/v0/health", (context) => {
     const response = {
@@ -114,6 +163,45 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
   });
 
   return app;
+}
+
+function applyCorsHeaders(context: { header(name: string, value: string): void }, origin: string) {
+  context.header("Access-Control-Allow-Credentials", "true");
+  context.header("Access-Control-Allow-Origin", origin);
+  context.header("Vary", "Origin");
+}
+
+function corsHeaders(origin: string, preflight = false): Headers {
+  const headers = new Headers({
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Origin": origin,
+    Vary: "Origin",
+  });
+  if (preflight) {
+    headers.set("Access-Control-Allow-Headers", "Content-Type");
+    headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    headers.set("Access-Control-Max-Age", "600");
+  }
+  return headers;
+}
+
+function securityErrorResponse(
+  code: "AUTH_REQUIRED" | "ORIGIN_FORBIDDEN",
+  status: 401 | 403,
+  allowedOrigin?: string,
+): Response {
+  const response = {
+    format: "loom.error.v0",
+    code,
+    message:
+      code === "AUTH_REQUIRED"
+        ? "A valid daemon session is required"
+        : "The request origin is not allowed",
+  } satisfies LoomErrorResponse;
+  return Response.json(response, {
+    status,
+    ...(allowedOrigin === undefined ? {} : { headers: corsHeaders(allowedOrigin) }),
+  });
 }
 
 function requireProjectId(input: string | undefined): string {

@@ -10,6 +10,28 @@ The initial contract defines:
 - daemon health and profile discovery responses;
 - ordered session events, replay responses, and redacted errors.
 
+## Daemon session
+
+The bootstrap route requires the configured exact Origin. After bootstrap, browser-facing routes
+other than health and CORS preflight require both that Origin and a valid daemon-session cookie. The
+browser starts with:
+
+```text
+POST /v0/auth/bootstrap
+Origin: http://127.0.0.1:3000
+```
+
+The successful JSON response contains no credential:
+
+```json
+{ "format": "loom.auth.v0", "status": "ready" }
+```
+
+The startup secret is delivered only in an HttpOnly, SameSite session cookie. It is generated from
+256 bits of randomness for each daemon process, never accepted in a query parameter, and invalid
+after restart. Missing or invalid credentials return `AUTH_REQUIRED`; an absent or mismatched Origin
+returns `ORIGIN_FORBIDDEN`. The daemon never uses `Access-Control-Allow-Origin: *`.
+
 ## Session events
 
 Every event uses the `loom.event.v0` envelope:

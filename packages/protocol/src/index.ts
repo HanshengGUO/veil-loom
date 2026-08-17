@@ -119,6 +119,20 @@ export const LoomHealthResponseSchema = Type.Object(
 
 export type LoomHealthResponse = Static<typeof LoomHealthResponseSchema>;
 
+export const LoomAuthResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.auth.v0"),
+    status: Type.Literal("ready"),
+  },
+  { additionalProperties: false, $id: "LoomAuthResponse" },
+);
+
+export type LoomAuthResponse = Static<typeof LoomAuthResponseSchema>;
+
+export function isLoomAuthResponse(input: unknown): input is LoomAuthResponse {
+  return Check(LoomAuthResponseSchema, input);
+}
+
 export const LoomCapabilitiesResponseSchema = Type.Object(
   {
     format: Type.Literal("loom.capabilities.v0"),
@@ -220,6 +234,8 @@ export const LoomErrorCodeSchema = Type.Union(
     Type.Literal("INVALID_REQUEST"),
     Type.Literal("EVENT_CURSOR_AHEAD"),
     Type.Literal("EVENT_LOG_UNAVAILABLE"),
+    Type.Literal("AUTH_REQUIRED"),
+    Type.Literal("ORIGIN_FORBIDDEN"),
     Type.Literal("INTERNAL_ERROR"),
   ],
   { $id: "LoomErrorCode" },

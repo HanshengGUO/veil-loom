@@ -11,11 +11,13 @@ import {
   type BrowserConnectionState,
   useSessionEventStream,
 } from "../hooks/use-session-event-stream";
+import { resolveDaemonOrigin } from "../lib/daemon-auth";
 import type { ConversationEntry, TaskProjection } from "../lib/session-projection";
 
 const DEMO_PROJECT_ID = "daily-factor-demo";
 const DEMO_SESSION_ID = "raw-pi-demo";
 const DEMO_STREAM_ENABLED = process.env.NODE_ENV === "development";
+const DAEMON_ORIGIN = resolveDaemonOrigin(process.env.NEXT_PUBLIC_LOOM_DAEMON_ORIGIN);
 
 const CAPABILITY_LABELS: Readonly<Record<LoomCapability, string>> = {
   chat: "Chat",
@@ -34,7 +36,7 @@ export function WorkspaceShell() {
   const [profileId, setProfileId] = useState<LoomSessionProfile>("raw-pi");
   const { projection, connection } = useSessionEventStream({
     enabled: DEMO_STREAM_ENABLED,
-    basePath: "/loom-daemon",
+    daemonOrigin: DAEMON_ORIGIN,
     projectId: DEMO_PROJECT_ID,
     sessionId: DEMO_SESSION_ID,
   });

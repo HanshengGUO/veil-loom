@@ -33,6 +33,7 @@ export interface SessionEventStreamOptions {
   sessionId: string;
   onProjection: (projection: SessionProjection) => void;
   onConnection: (connection: SessionConnectionState) => void;
+  authorize?: () => Promise<void>;
   eventSourceFactory?: EventSourceFactory;
   scheduler?: StreamScheduler;
   retryDelayMilliseconds?: number;
@@ -62,7 +63,8 @@ export class SessionEventStream {
     this.#started = true;
     this.#options.onProjection(this.#projection);
     this.#options.onConnection({ status: "connecting", attempt: 0 });
-    this.#connect();
+    if (this.#options.authorize === undefined) this.#connect();
+    else void this.#authorizeAndConnect();
   }
 
   stop(): void {
@@ -77,14 +79,20 @@ export class SessionEventStream {
 
   #connect(): void {
     if (!this.#started) return;
-    const source = this.#factory(
-      sessionStreamUrl(
-        this.#options.basePath,
-        this.#options.projectId,
-        this.#options.sessionId,
-        this.#projection.lastSequence,
-      ),
-    );
+    let source: EventSourcePort;
+    try {
+      source = this.#factory(
+        sessionStreamUrl(
+          this.#options.basePath,
+          this.#options.projectId,
+          this.#options.sessionId,
+          this.#projection.lastSequence,
+        ),
+      );
+    } catch {
+      this.#scheduleReconnect(this.#retryDelay());
+      return;
+    }
     this.#source = source;
 
     source.onOpen(() => {
@@ -153,8 +161,20 @@ export class SessionEventStream {
     this.#options.onConnection({ status: "reconnecting", attempt: this.#attempt });
     this.#retryHandle = this.#scheduler.schedule(() => {
       this.#retryHandle = undefined;
-      this.#connect();
+      if (this.#options.authorize === undefined) this.#connect();
+      else void this.#authorizeAndConnect();
     }, delayMilliseconds);
+  }
+
+  async #authorizeAndConnect(): Promise<void> {
+    if (!this.#started || this.#options.authorize === undefined) return;
+    try {
+      await this.#options.authorize();
+    } catch {
+      if (this.#started) this.#scheduleReconnect(this.#retryDelay());
+      return;
+    }
+    if (this.#started) this.#connect();
   }
 
   #retryDelay(): number {
@@ -180,7 +200,7 @@ const browserScheduler: StreamScheduler = {
 };
 
 function browserEventSourceFactory(url: string): EventSourcePort {
-  const source = new EventSource(url);
+  const source = new EventSource(url, { withCredentials: true });
   return {
     onOpen(listener) {
       source.addEventListener("open", listener);

@@ -2,6 +2,7 @@ import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import {
   isLoomAssurance,
+  isLoomAuthResponse,
   isLoomEventEnvelope,
   isLoomPortableId,
   LOOM_PROFILE_DESCRIPTORS,
@@ -67,6 +68,15 @@ describe("Loom event protocol", () => {
     expect(isLoomEventEnvelope({ ...event, projectId: "project/a" })).toBe(false);
     expect(isLoomPortableId("project-a_1.0")).toBe(true);
     expect(isLoomPortableId("../project-a")).toBe(false);
+  });
+});
+
+describe("Loom authentication protocol", () => {
+  it("acknowledges a bootstrap without exposing token material", () => {
+    expect(isLoomAuthResponse({ format: "loom.auth.v0", status: "ready" })).toBe(true);
+    expect(
+      isLoomAuthResponse({ format: "loom.auth.v0", status: "ready", token: "must-not-leak" }),
+    ).toBe(false);
   });
 });
 
