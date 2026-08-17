@@ -17,7 +17,17 @@ describe("session projection reducer", () => {
       event(5, "message.assistant_delta", { messageId: "assistant-1", delta: "Done" }),
       event(6, "message.assistant_completed", { messageId: "assistant-1" }),
       event(7, "task.completed", { taskId: "task-1" }),
-      event(8, "session.ready", {}),
+      event(8, "session.ready", {
+        runtime: {
+          format: "loom.pi-runtime.v0",
+          package: "@earendil-works/pi-coding-agent",
+          version: "0.84.2",
+          provider: "loom-offline-fixture",
+          model: "loom-fixture-v0",
+          mode: "offline-fixture",
+          fingerprint: "pi-0.84.2__loom-offline-fixture__loom-fixture-v0",
+        },
+      }),
     ]) {
       const result = applySessionEvent(state, fixtureEvent);
       expect(result.outcome).toBe("applied");
@@ -28,6 +38,7 @@ describe("session projection reducer", () => {
       lastSequence: 8,
       profile: "raw-pi",
       status: "ready",
+      runtime: { provider: "loom-offline-fixture", model: "loom-fixture-v0" },
       activeView: { id: "view-1", title: "Daily factor" },
       conversation: [
         { id: "user-1", role: "user", content: "Run it" },

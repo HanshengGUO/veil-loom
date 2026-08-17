@@ -68,7 +68,7 @@ export function WorkspaceShell() {
 
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--muted)]">
-            Daily factor demo
+            Offline Pi fixture
           </span>
           <ConnectionBadge connection={connection} />
           <button
@@ -76,7 +76,7 @@ export function WorkspaceShell() {
             disabled
             type="button"
           >
-            {sessionFrozen ? "Session restored" : "Demo session"}
+            {sessionFrozen ? "Pi session restored" : "Demo session"}
           </button>
         </div>
       </header>
@@ -118,7 +118,9 @@ export function WorkspaceShell() {
               <div>
                 <h1 className="text-base font-semibold">Research conversation</h1>
                 <p className="mt-1 text-xs text-[var(--muted)]">
-                  {profile.label} · {profile.assurance.replaceAll("-", " ")}
+                  {projection.runtime === undefined
+                    ? `${profile.label} · ${profile.assurance.replaceAll("-", " ")}`
+                    : `${projection.runtime.provider}/${projection.runtime.model} · Pi ${projection.runtime.version}`}
                 </p>
               </div>
               <span className="rounded-md border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[10px] font-bold tracking-wide text-[var(--warning)]">
@@ -159,14 +161,16 @@ export function WorkspaceShell() {
                   seq {projection.lastSequence}
                 </span>
               </div>
-              {latestTask === undefined ? null : <TaskStatus task={latestTask} />}
+              {latestTask === undefined ? null : (
+                <TaskStatus activity={projection.lastActivity} task={latestTask} />
+              )}
             </div>
           </div>
 
           <div className="border-t border-[var(--border)] p-4">
             <div className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-black/20 p-2 pl-4">
               <span className="flex-1 text-sm text-slate-500">
-                Connect the daemon to send a message…
+                Interactive composer arrives after the command fixture…
               </span>
               <button
                 className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-slate-500"
@@ -278,11 +282,19 @@ function ConversationMessage({ entry }: Readonly<{ entry: ConversationEntry }>) 
   );
 }
 
-function TaskStatus({ task }: Readonly<{ task: TaskProjection }>) {
+function TaskStatus({
+  activity,
+  task,
+}: Readonly<{ activity: string | undefined; task: TaskProjection }>) {
   return (
-    <div className="mt-3 flex items-center justify-between border-t border-[var(--border)] pt-3 text-[11px]">
-      <span className="text-slate-400">{task.label}</span>
-      <span className="font-mono text-slate-500">{task.status}</span>
+    <div className="mt-3 border-t border-[var(--border)] pt-3 text-[11px]">
+      <div className="flex items-center justify-between">
+        <span className="text-slate-400">{task.label}</span>
+        <span className="font-mono text-slate-500">{task.status}</span>
+      </div>
+      {activity === undefined ? null : (
+        <p className="mt-1 text-[10px] text-slate-500">Latest Pi activity: {activity}</p>
+      )}
     </div>
   );
 }
@@ -296,7 +308,7 @@ function streamDescription(connection: BrowserConnectionState, issue: string | u
   }
   if (connection.status === "failed") return "The stream failed closed after a protocol error.";
   if (connection.status === "disabled") return "Run both development processes to enable the demo.";
-  return "Opening the local deterministic event stream…";
+  return "Opening the deterministic offline Pi event stream…";
 }
 
 function ChartPlaceholder({

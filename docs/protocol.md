@@ -74,6 +74,27 @@ closes the connection and explicitly requests replay after 10.
 Large chart series will be referenced as immutable blobs rather than repeated in an unbounded event
 log.
 
+## Commands
+
+Mutations use exact, versioned JSON bodies and return `202 Accepted` with a generated command ID:
+
+```text
+POST /v0/projects/:projectId/sessions
+POST /v0/sessions/:sessionId/messages?projectId=:projectId
+POST /v0/sessions/:sessionId/tasks/:taskId/cancel?projectId=:projectId
+```
+
+The corresponding body formats are `loom.session.create.v0`, `loom.message.send.v0`, and
+`loom.task.cancel.v0`. Unknown fields, blank messages, oversized bodies, non-portable IDs, and
+unavailable profiles fail closed. A successful response uses `loom.command.accepted.v0`; a message
+or cancellation response also carries the task ID. Completion never depends on the HTTP connection:
+it is reported by the ordered event stream.
+
+The Raw Pi adapter maps public text deltas, assistant completion, and coarse tool/task state. It does
+not expose model thinking, tool arguments, tool result bodies, or provider diagnostics. The
+`loom.pi-runtime.v0` descriptor records package version, provider, model, mode, and a non-secret
+fingerprint so a replay remains attributable.
+
 ## Assurance
 
 Loom may issue only `exploratory` assurance. Contract and Experiment states must be independently

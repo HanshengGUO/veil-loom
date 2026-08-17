@@ -1,4 +1,9 @@
-import type { LoomEventEnvelope, LoomSessionProfile } from "@veilquant/loom-protocol";
+import {
+  isLoomPiRuntimeDescriptor,
+  type LoomEventEnvelope,
+  type LoomPiRuntimeDescriptor,
+  type LoomSessionProfile,
+} from "@veilquant/loom-protocol";
 
 export interface ConversationEntry {
   id: string;
@@ -42,6 +47,7 @@ export interface SessionProjection {
   eventIds: readonly string[];
   eventSignatures: readonly string[];
   profile: LoomSessionProfile | undefined;
+  runtime: LoomPiRuntimeDescriptor | undefined;
   status: string;
   conversation: readonly ConversationEntry[];
   tasks: readonly TaskProjection[];
@@ -65,6 +71,7 @@ export function createSessionProjection(projectId: string, sessionId: string): S
     eventIds: [],
     eventSignatures: [],
     profile: undefined,
+    runtime: undefined,
     status: "waiting",
     conversation: [],
     tasks: [],
@@ -139,9 +146,13 @@ export function applySessionEvent(
       };
       break;
     }
-    case "session.ready":
-      next = { ...next, status: "ready" };
+    case "session.ready": {
+      const runtime = isLoomPiRuntimeDescriptor(event.payload.runtime)
+        ? event.payload.runtime
+        : undefined;
+      next = { ...next, status: "ready", ...(runtime === undefined ? {} : { runtime }) };
       break;
+    }
     case "session.status_changed": {
       const status = stringField(event.payload.status);
       if (status !== undefined) next = { ...next, status };

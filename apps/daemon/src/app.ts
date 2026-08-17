@@ -1,4 +1,9 @@
+import { join } from "node:path";
 import {
+  isLoomCancelTaskRequest,
+  isLoomCreateSessionRequest,
+  isLoomPortableId,
+  isLoomSendMessageRequest,
   LOOM_PROFILE_DESCRIPTORS,
   type LoomAuthResponse,
   type LoomCapabilitiesResponse,
@@ -10,6 +15,8 @@ import {
 } from "@veilquant/loom-protocol";
 import { Hono } from "hono";
 import { SessionEventStoreError, SessionEventStoreRegistry } from "./event-store.js";
+import { RuntimeAdapterError } from "./runtime-adapter.js";
+import { createDefaultRuntimeHost, type LoomRuntimeHost } from "./runtime-host.js";
 import { DaemonSecurity } from "./security.js";
 import { resolveLoomStateRoot } from "./state-root.js";
 
@@ -17,13 +24,21 @@ const DAEMON_VERSION = "0.0.0";
 
 export interface LoomAppOptions {
   eventStores?: SessionEventStoreRegistry;
+  runtimeHost?: LoomRuntimeHost;
   security?: DaemonSecurity;
 }
 
 export function createLoomApp(options: LoomAppOptions = {}): Hono {
   const app = new Hono();
-  const eventStores =
-    options.eventStores ?? new SessionEventStoreRegistry({ stateRoot: resolveLoomStateRoot() });
+  const stateRoot = resolveLoomStateRoot();
+  const eventStores = options.eventStores ?? new SessionEventStoreRegistry({ stateRoot });
+  const runtimeHost =
+    options.runtimeHost ??
+    createDefaultRuntimeHost({
+      eventStores,
+      cwd: process.cwd(),
+      agentDir: join(stateRoot, "pi"),
+    });
   const security = options.security ?? new DaemonSecurity();
 
   app.use("/v0/*", async (context, next) => {
@@ -87,6 +102,53 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
       profiles: LOOM_PROFILE_DESCRIPTORS,
     } satisfies LoomCapabilitiesResponse;
     return context.json(response);
+  });
+
+  app.post("/v0/projects/:projectId/sessions", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.param("projectId"));
+      const request = await readJsonBody(context.req.raw);
+      if (!isLoomCreateSessionRequest(request)) throw new RequestValidationError();
+      const response = await runtimeHost.createSession({
+        projectId,
+        profile: request.profile,
+        ...(request.title === undefined ? {} : { title: request.title }),
+      });
+      return context.json(response, 202);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.post("/v0/sessions/:sessionId/messages", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sessionId = requireSessionId(context.req.param("sessionId"));
+      const request = await readJsonBody(context.req.raw);
+      if (!isLoomSendMessageRequest(request)) throw new RequestValidationError();
+      const response = await runtimeHost.sendMessage({
+        projectId,
+        sessionId,
+        content: request.content,
+      });
+      return context.json(response, 202);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.post("/v0/sessions/:sessionId/tasks/:taskId/cancel", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sessionId = requireSessionId(context.req.param("sessionId"));
+      const taskId = requireSessionId(context.req.param("taskId"));
+      const request = await readJsonBody(context.req.raw);
+      if (!isLoomCancelTaskRequest(request)) throw new RequestValidationError();
+      const response = await runtimeHost.cancelTask({ projectId, sessionId, taskId });
+      return context.json(response, 202);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
   });
 
   app.get("/v0/sessions/:sessionId/events", async (context) => {
@@ -205,10 +267,61 @@ function securityErrorResponse(
 }
 
 function requireProjectId(input: string | undefined): string {
-  if (input === undefined || input.length === 0) {
+  if (input === undefined || !isLoomPortableId(input)) {
     throw new SessionEventStoreError("INVALID_ID", "A project ID is required");
   }
   return input;
+}
+
+function requireSessionId(input: string): string {
+  if (!isLoomPortableId(input)) {
+    throw new SessionEventStoreError("INVALID_ID", "A portable ID is required");
+  }
+  return input;
+}
+
+class RequestValidationError extends Error {
+  constructor() {
+    super("The JSON request does not match the command schema");
+    this.name = "RequestValidationError";
+  }
+}
+
+async function readJsonBody(request: Request): Promise<unknown> {
+  const maximumBytes = 65_536;
+  const contentLength = request.headers.get("Content-Length");
+  if (contentLength !== null) {
+    const bytes = Number(contentLength);
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > maximumBytes) {
+      throw new RequestValidationError();
+    }
+  }
+  if (request.body === null) throw new RequestValidationError();
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > maximumBytes) {
+        await reader.cancel();
+        throw new RequestValidationError();
+      }
+      chunks.push(chunk.value);
+    }
+    const body = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown;
+  } catch {
+    throw new RequestValidationError();
+  }
 }
 
 function parseEventCursor(input: string | undefined): number {
@@ -234,7 +347,27 @@ function eventErrorResponse(error: unknown): Response {
   let code: LoomErrorCode = "INTERNAL_ERROR";
   let message = "The daemon could not complete the request";
 
-  if (error instanceof SessionEventStoreError) {
+  if (error instanceof RequestValidationError) {
+    status = 400;
+    code = "INVALID_REQUEST";
+    message = "The command request is invalid";
+  } else if (error instanceof RuntimeAdapterError) {
+    code = error.code;
+    if (error.code === "SESSION_NOT_FOUND" || error.code === "TASK_NOT_FOUND") {
+      status = 404;
+      message =
+        error.code === "SESSION_NOT_FOUND" ? "The session was not found" : "The task was not found";
+    } else if (error.code === "RUNTIME_UNAVAILABLE") {
+      status = 503;
+      message = "The requested runtime is unavailable";
+    } else {
+      status = 409;
+      message =
+        error.code === "PROFILE_UNAVAILABLE"
+          ? "The requested profile is not available"
+          : "The command conflicts with the current runtime state";
+    }
+  } else if (error instanceof SessionEventStoreError) {
     if (error.code === "INVALID_ID" || error.code === "INVALID_CURSOR") {
       status = 400;
       code = "INVALID_REQUEST";

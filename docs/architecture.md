@@ -43,6 +43,18 @@ Next.js request handlers and Server Actions do not own research tasks. The daemo
 persists task state, and reports progress or a terminal result through the event stream. Browser
 disconnects do not cancel tasks.
 
+## Pi host
+
+The daemon embeds Pi through its public programmatic `AgentSession` API. A runtime adapter owns each
+session, subscribes to Pi events, and turns only user-visible text and coarse tool/task lifecycle
+into Loom events. It does not publish thinking blocks, tool arguments, tool result bodies, provider
+errors, environment values, or local paths. Every session records the Pi package version and a
+provider/model fingerprint without recording credentials.
+
+The current slice enables only a deterministic offline provider and a fixture-only Loom extension
+tool. The tool has no shell, filesystem, or network authority. Real provider configuration and local
+coding tools remain opt-in work; they will stay in the daemon rather than moving into the browser.
+
 ## Event recovery
 
 Each session has an append-only JSONL event log with its own contiguous sequence. The daemon syncs a
@@ -68,9 +80,10 @@ State lives in the normal per-user application-state directory:
 
 ## Development fixture
 
-`npm run dev:daemon` enables one deterministic Raw Pi session. Seeding is idempotent across daemon
-restarts and refuses to overwrite a conflicting log. `npm run dev:web` authenticates directly to the
-loopback daemon and renders its SSE projection. Production builds do not enable the demo stream.
+`npm run dev:daemon` runs one scripted request through a real Pi session and Pi's offline faux
+provider. The resulting public projection is durable, is validated on restart, and refuses to reuse
+a conflicting log. `npm run dev:web` authenticates directly to the loopback daemon and renders that
+SSE projection. Production builds do not enable the demo stream.
 
 ## Dependency direction
 

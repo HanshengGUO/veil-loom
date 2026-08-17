@@ -14,7 +14,7 @@
     "apps/*"
   ],
   "engines": {
-    "node": ">=20.10.0 <30"
+    "node": ">=22.19.0 <30"
   },
   "packageManager": "npm@11.19.0",
   "scripts": {

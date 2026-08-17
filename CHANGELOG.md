@@ -18,3 +18,6 @@ are tracked independently from package versions.
 - An idempotent durable Raw Pi demo session rendered in the dual-pane development shell.
 - Per-process 256-bit daemon sessions delivered through an Origin-gated HttpOnly cookie handshake.
 - Credentialed direct SSE, strict CORS responses, token rotation, and real loopback binding tests.
+- A real Raw Pi `AgentSession` host with a deterministic offline provider and inline Loom extension.
+- Versioned session, message, and cancellation commands with durable redacted Pi event projection.
+- Pi package/provider/model fingerprints, cancellation coverage, and provider-error redaction tests.

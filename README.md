@@ -1,15 +1,15 @@
 # Veil Loom
 
 Veil Loom is a local-first visual workspace for quantitative research with
-[Pi](https://github.com/badlogic/pi-mono) and [Veil](https://github.com/HanshengGUO/veil).
+[Pi](https://github.com/earendil-works/pi) and [Veil](https://github.com/HanshengGUO/veil).
 
 It is designed around one simple boundary: exploration should stay fast, while claims should remain
 honest. Raw Pi sessions can chat, code, run local tools, and publish interactive research views.
 Veil sessions add guarded data, promotion contracts, statistical gates, Experiment memory, and
 reproduction.
 
-> Status: pre-alpha with a working event/replay backbone and deterministic browser demo. Pi is not
-> integrated yet, and nothing is published to npm.
+> Status: pre-alpha with a working event/replay backbone and a real Pi host exercised by an offline,
+> deterministic provider fixture. Nothing is published to npm.
 
 ## Session profiles
 
@@ -51,7 +51,7 @@ docs/              public architecture, protocol, and security notes
 
 ## Development
 
-Requires Node 20.10 or newer.
+Requires Node 22.19 or newer.
 
 ```bash
 npm install
@@ -65,18 +65,18 @@ npm run dev:daemon
 npm run dev:web
 ```
 
-Both processes bind to loopback. In development, the daemon seeds a durable Raw Pi demo session and
-the web app replays it into the conversation, task, connection, and view state. Refreshing the page
-rebuilds that state from event one; reconnects resume from the last event the reducer actually
-applied.
+Both processes bind to loopback. In development, the daemon runs a scripted request through Pi's
+real programmatic session and Loom extension using Pi's offline faux provider. It persists only the
+public conversation, tool, and task projection; the web app rebuilds that state from event one and
+reconnects from the last event the reducer actually applied.
 
 Open the web app at its exact loopback address, `http://127.0.0.1:3000`. It performs an Origin-gated
 bootstrap and receives an HttpOnly daemon-session cookie; no token needs to be copied into the UI or
 placed in a URL. The daemon listens at `http://127.0.0.1:43120` by default.
 
-The chart shapes are still placeholders, and the demo does not run Pi or a backtest. Its purpose is
-to exercise ordering, recovery, profile freezing, and honest exploratory labels before local
-execution is enabled.
+The chart shapes are still placeholders, and the fixture does not run a backtest or contact a model
+service. Its purpose is to exercise the Pi host, cancellation boundary, ordering, recovery, profile
+freezing, and honest exploratory labels before local project execution is enabled.
 
 ## Initial milestone
 

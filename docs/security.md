@@ -47,6 +47,11 @@ The browser must not receive:
 Session logs accept only versioned, JSON-safe event envelopes. Public API failures use stable error
 codes and do not return storage paths or private filesystem diagnostics.
 
+Pi's event stream is an internal input, not a public passthrough. Loom publishes visible assistant
+text and coarse lifecycle facts, but drops thinking blocks, tool arguments, tool result bodies, and
+provider error messages. The committed CI/development provider is Pi's in-memory faux provider with
+network refresh disabled; its sole Loom fixture tool has no filesystem, shell, or network access.
+
 ## Non-goals
 
 The initial release does not defend against a deliberately malicious local user or provide an

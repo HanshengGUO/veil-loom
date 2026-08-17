@@ -1,10 +1,15 @@
 import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import {
+  isLoomAcceptedCommandResponse,
   isLoomAssurance,
   isLoomAuthResponse,
+  isLoomCancelTaskRequest,
+  isLoomCreateSessionRequest,
   isLoomEventEnvelope,
+  isLoomPiRuntimeDescriptor,
   isLoomPortableId,
+  isLoomSendMessageRequest,
   LOOM_PROFILE_DESCRIPTORS,
   LoomAssuranceSchema,
   LoomEventEnvelopeSchema,
@@ -77,6 +82,70 @@ describe("Loom authentication protocol", () => {
     expect(
       isLoomAuthResponse({ format: "loom.auth.v0", status: "ready", token: "must-not-leak" }),
     ).toBe(false);
+  });
+});
+
+describe("Loom command protocol", () => {
+  it("accepts exact create, message, cancel, and accepted-command records", () => {
+    expect(
+      isLoomCreateSessionRequest({
+        format: "loom.session.create.v0",
+        profile: "raw-pi",
+        title: "Daily factor",
+      }),
+    ).toBe(true);
+    expect(
+      isLoomSendMessageRequest({ format: "loom.message.send.v0", content: "Inspect it." }),
+    ).toBe(true);
+    expect(isLoomCancelTaskRequest({ format: "loom.task.cancel.v0" })).toBe(true);
+    expect(
+      isLoomAcceptedCommandResponse({
+        format: "loom.command.accepted.v0",
+        commandId: "command-1",
+        projectId: "project-1",
+        sessionId: "session-1",
+        taskId: "task-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects blank content, unknown fields, and non-portable response IDs", () => {
+    expect(
+      isLoomCreateSessionRequest({
+        format: "loom.session.create.v0",
+        profile: "raw-pi",
+        title: "   ",
+      }),
+    ).toBe(false);
+    expect(
+      isLoomSendMessageRequest({
+        format: "loom.message.send.v0",
+        content: "   ",
+        trusted: true,
+      }),
+    ).toBe(false);
+    expect(
+      isLoomAcceptedCommandResponse({
+        format: "loom.command.accepted.v0",
+        commandId: "../command",
+        projectId: "project-1",
+        sessionId: "session-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("validates a redacted Pi runtime fingerprint without accepting extra details", () => {
+    const runtime = {
+      format: "loom.pi-runtime.v0",
+      package: "@earendil-works/pi-coding-agent",
+      version: "0.84.2",
+      provider: "loom-offline-fixture",
+      model: "loom-fixture-v0",
+      mode: "offline-fixture",
+      fingerprint: "pi-0.84.2__loom-offline-fixture__loom-fixture-v0",
+    };
+    expect(isLoomPiRuntimeDescriptor(runtime)).toBe(true);
+    expect(isLoomPiRuntimeDescriptor({ ...runtime, apiKey: "must-not-leak" })).toBe(false);
   });
 });
 

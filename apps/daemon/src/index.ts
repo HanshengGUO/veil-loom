@@ -1,22 +1,30 @@
+import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { createLoomApp } from "./app.js";
 import { seedDemoSession } from "./demo-session.js";
 import { SessionEventStoreRegistry } from "./event-store.js";
+import { createDefaultRuntimeHost } from "./runtime-host.js";
 import { DaemonSecurity, resolveAllowedWebOrigin } from "./security.js";
 import { daemonServeOptions, LOOPBACK_HOST, parseDaemonPort } from "./server-config.js";
 import { resolveLoomStateRoot } from "./state-root.js";
 
 const port = parseDaemonPort(process.env.LOOM_DAEMON_PORT);
-const eventStores = new SessionEventStoreRegistry({ stateRoot: resolveLoomStateRoot() });
+const stateRoot = resolveLoomStateRoot();
+const eventStores = new SessionEventStoreRegistry({ stateRoot });
+const runtimeHost = createDefaultRuntimeHost({
+  eventStores,
+  cwd: process.cwd(),
+  agentDir: join(stateRoot, "pi"),
+});
 const security = new DaemonSecurity({
   allowedOrigin: resolveAllowedWebOrigin(process.env.LOOM_WEB_ORIGIN),
 });
 const demoSessionEnabled = process.env.LOOM_DEMO_SESSION === "1";
 
-if (demoSessionEnabled) await seedDemoSession(eventStores);
+if (demoSessionEnabled) await seedDemoSession(eventStores, runtimeHost);
 
-serve(daemonServeOptions(createLoomApp({ eventStores, security }).fetch, port));
+serve(daemonServeOptions(createLoomApp({ eventStores, runtimeHost, security }).fetch, port));
 
 process.stdout.write(
-  `Veil Loom daemon listening on http://${LOOPBACK_HOST}:${port}${demoSessionEnabled ? " with the demo session" : ""}\n`,
+  `Veil Loom daemon listening on http://${LOOPBACK_HOST}:${port}${demoSessionEnabled ? " with the offline Pi fixture" : ""}\n`,
 );

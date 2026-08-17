@@ -42,6 +42,25 @@ export const LoomProfileDescriptorSchema = Type.Object(
 
 export type LoomProfileDescriptor = Static<typeof LoomProfileDescriptorSchema>;
 
+export const LoomPiRuntimeDescriptorSchema = Type.Object(
+  {
+    format: Type.Literal("loom.pi-runtime.v0"),
+    package: Type.Literal("@earendil-works/pi-coding-agent"),
+    version: Type.String({ minLength: 1 }),
+    provider: Type.String({ minLength: 1 }),
+    model: Type.String({ minLength: 1 }),
+    mode: Type.Union([Type.Literal("offline-fixture"), Type.Literal("provider")]),
+    fingerprint: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$" }),
+  },
+  { additionalProperties: false, $id: "LoomPiRuntimeDescriptor" },
+);
+
+export type LoomPiRuntimeDescriptor = Static<typeof LoomPiRuntimeDescriptorSchema>;
+
+export function isLoomPiRuntimeDescriptor(input: unknown): input is LoomPiRuntimeDescriptor {
+  return Check(LoomPiRuntimeDescriptorSchema, input);
+}
+
 const SHARED_CAPABILITIES = [
   "chat",
   "local-code",
@@ -157,6 +176,66 @@ export function isLoomPortableId(input: unknown): input is LoomPortableId {
   return typeof input === "string" && PORTABLE_ID_REGEXP.test(input);
 }
 
+export const LoomCreateSessionRequestSchema = Type.Object(
+  {
+    format: Type.Literal("loom.session.create.v0"),
+    profile: LoomSessionProfileSchema,
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
+  },
+  { additionalProperties: false, $id: "LoomCreateSessionRequest" },
+);
+
+export type LoomCreateSessionRequest = Static<typeof LoomCreateSessionRequestSchema>;
+
+export function isLoomCreateSessionRequest(input: unknown): input is LoomCreateSessionRequest {
+  if (!Check(LoomCreateSessionRequestSchema, input)) return false;
+  return input.title === undefined || input.title.trim().length > 0;
+}
+
+export const LoomSendMessageRequestSchema = Type.Object(
+  {
+    format: Type.Literal("loom.message.send.v0"),
+    content: Type.String({ minLength: 1, maxLength: 32_768 }),
+  },
+  { additionalProperties: false, $id: "LoomSendMessageRequest" },
+);
+
+export type LoomSendMessageRequest = Static<typeof LoomSendMessageRequestSchema>;
+
+export function isLoomSendMessageRequest(input: unknown): input is LoomSendMessageRequest {
+  return Check(LoomSendMessageRequestSchema, input) && input.content.trim().length > 0;
+}
+
+export const LoomCancelTaskRequestSchema = Type.Object(
+  { format: Type.Literal("loom.task.cancel.v0") },
+  { additionalProperties: false, $id: "LoomCancelTaskRequest" },
+);
+
+export type LoomCancelTaskRequest = Static<typeof LoomCancelTaskRequestSchema>;
+
+export function isLoomCancelTaskRequest(input: unknown): input is LoomCancelTaskRequest {
+  return Check(LoomCancelTaskRequestSchema, input);
+}
+
+export const LoomAcceptedCommandResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.command.accepted.v0"),
+    commandId: LoomPortableIdSchema,
+    projectId: LoomPortableIdSchema,
+    sessionId: LoomPortableIdSchema,
+    taskId: Type.Optional(LoomPortableIdSchema),
+  },
+  { additionalProperties: false, $id: "LoomAcceptedCommandResponse" },
+);
+
+export type LoomAcceptedCommandResponse = Static<typeof LoomAcceptedCommandResponseSchema>;
+
+export function isLoomAcceptedCommandResponse(
+  input: unknown,
+): input is LoomAcceptedCommandResponse {
+  return Check(LoomAcceptedCommandResponseSchema, input);
+}
+
 export const LoomEventTypeSchema = Type.Union(
   [
     Type.Literal("session.created"),
@@ -236,6 +315,13 @@ export const LoomErrorCodeSchema = Type.Union(
     Type.Literal("EVENT_LOG_UNAVAILABLE"),
     Type.Literal("AUTH_REQUIRED"),
     Type.Literal("ORIGIN_FORBIDDEN"),
+    Type.Literal("PROFILE_UNAVAILABLE"),
+    Type.Literal("SESSION_NOT_FOUND"),
+    Type.Literal("SESSION_BUSY"),
+    Type.Literal("SESSION_CONFLICT"),
+    Type.Literal("TASK_NOT_FOUND"),
+    Type.Literal("TASK_NOT_CANCELLABLE"),
+    Type.Literal("RUNTIME_UNAVAILABLE"),
     Type.Literal("INTERNAL_ERROR"),
   ],
   { $id: "LoomErrorCode" },
