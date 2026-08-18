@@ -15,3 +15,10 @@ test-results/
 internal/
 .loom/
 *.local
+
+examples/daily-factor/.veil/experiments/
+examples/daily-factor/.veil/loom-attempts/
+examples/daily-factor/.veil/runs/
+examples/daily-factor/.veil/snapshots/
+examples/daily-factor/.veil/views/
+examples/daily-factor/.veil/research-log.md

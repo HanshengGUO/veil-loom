@@ -9,8 +9,8 @@ Veil sessions add guarded data, promotion contracts, statistical gates, Experime
 reproduction.
 
 > Status: pre-alpha with restart-resilient Raw Pi and Veil sessions, synchronized backtest charts,
-> bounded chart selections, and project-level Veil readiness checks. The model path remains fully
-> offline, and Loom itself is not published to npm.
+> bounded chart selections, project-level Veil readiness, and independent Raw-to-Veil verification
+> attempts. The model path remains fully offline, and Loom itself is not published to npm.
 
 ## Session profiles
 
@@ -19,13 +19,15 @@ reproduction.
 | Raw Pi | Pi plus Loom conversation and visualization tools | Every result is exploratory and unverified |
 | Veil | Raw Pi capabilities plus `veil-quant` | Veil may issue contract or Experiment evidence after independent re-execution |
 
-A Raw Pi result cannot be upgraded by changing a badge. The next slice, **Promote with Veil**, will
-create a new verification attempt and re-execute the locked artifact through Veil.
+A Raw Pi result cannot be upgraded by changing a badge. **Promote with Veil** creates a separate
+Veil session and ledger, rereads registered data, and re-executes the selected artifact. The source
+view stays exploratory regardless of the new attempt's outcome.
 
 The daemon currently pins `veil-quant` to the tested `0.1.x` line, loads its public project API, and
 reports whether the current project is ready. A ready profile means the Veil tools can be loaded; it
-does not mean that any result has been verified. Loom does not yet project promotion or Experiment
-evidence into the UI.
+does not mean that any result has been verified. Loom projects the new attempt's coarse lifecycle
+and archive-validated Experiment identity. The full evidence viewer and reproduction action are the
+next slice.
 
 ## Architecture
 
@@ -96,8 +98,16 @@ app. Project paths, dataset identifiers, environment values, and source locators
 Veil sessions use the same restart rules as Raw Pi sessions and remain
 **EXPLORATORY · UNVERIFIED** until independent evidence exists.
 
-This is a deterministic import fixture, not a general backtest engine, and it does not contact a
-model service. Every result remains **EXPLORATORY · UNVERIFIED**.
+The Web shell now exposes **Promote with Veil** for the committed Raw view. Its request contains only
+the owned view ID, a project-relative artifact reference, and the hypothesis. The daemon verifies
+the artifact digest, creates a new Veil session, records chronology, reads the registered panel
+through `veil-data`, and runs the complete contract, pricing, gate, and Experiment path. Raw equity,
+Sharpe, and other displayed metrics are not copied into the request or used as expected results.
+
+This is still one deterministic adapter fixture, not a general backtest engine, and it does not
+contact a model service. The Raw view remains **EXPLORATORY · UNVERIFIED**. Any accepted, degraded,
+or rejected assurance belongs only to the independently executed Veil attempt; an execution failure
+produces no Experiment label at all.
 
 ## Initial milestone
 
@@ -108,7 +118,7 @@ The first vertical slice is taking one deterministic daily-factor example end to
 3. render market, equity, drawdown, trades, and explicit assurance — implemented for the reference
    adapter;
 4. send a selected chart range back to Pi — implemented for the live offline fixture;
-5. create a fresh Veil verification attempt — next;
+5. create a fresh Veil verification attempt — implemented with a minimal portable handoff;
 6. inspect the Experiment and reproduce it — pending evidence projection.
 
 L2/L3 data, automatic framework detection, autonomous cruise mode, and multi-agent pattern scanning

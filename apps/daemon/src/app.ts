@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import {
   isLoomCancelTaskRequest,
+  isLoomCreatePromotionRequest,
   isLoomCreateSelectionRequest,
   isLoomCreateSessionRequest,
   isLoomPortableId,
@@ -156,6 +157,23 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
         sessionId,
         content: request.content,
         ...(request.selectionId === undefined ? {} : { selectionId: request.selectionId }),
+      });
+      return context.json(response, 202);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.post("/v0/sessions/:sessionId/promotions", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sourceSessionId = requireSessionId(context.req.param("sessionId"));
+      const request = await readJsonBody(context.req.raw);
+      if (!isLoomCreatePromotionRequest(request)) throw new RequestValidationError();
+      const response = await runtimeHost.createPromotion({
+        projectId,
+        sourceSessionId,
+        request,
       });
       return context.json(response, 202);
     } catch (error) {
@@ -446,6 +464,9 @@ function eventErrorResponse(error: unknown): Response {
     } else if (error.code === "PROJECT_NOT_READY") {
       status = 409;
       message = "The project is not ready for the requested profile";
+    } else if (error.code === "PROMOTION_NOT_AVAILABLE") {
+      status = 409;
+      message = "The selected result is not available for Veil promotion";
     } else {
       status = 409;
       message =

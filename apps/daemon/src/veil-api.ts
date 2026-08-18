@@ -27,11 +27,124 @@ interface VeilExtensionOptions {
   readonly now?: () => Date;
 }
 
+export interface VeilHypothesisEntry {
+  readonly format: "veil.hypothesis.v0";
+  readonly hypothesisRef: string;
+  readonly statement: string;
+  readonly ideaAvailableAt: string;
+  readonly captureMode: "automatic" | "explicit";
+}
+
+export interface VeilDataToolResult {
+  readonly format: "veil.agent-tool-result.v0";
+  readonly tool: "veil-data";
+  readonly ok: true;
+  readonly dataset: string;
+  readonly adapterVersion: string;
+  readonly view: {
+    readonly mode: "point" | "panel";
+    readonly grade: "guarded" | "exploration-grade";
+    readonly asOf: string;
+    readonly rowCount: number;
+  };
+  readonly evidence: {
+    readonly readSetId: string;
+    readonly resultHash: string;
+    readonly arrowHash: string;
+  };
+  readonly exportReference: string | null;
+}
+
+export interface VeilBacktestSuccess {
+  readonly format: "veil.agent-tool-result.v0";
+  readonly tool: "veil-backtest";
+  readonly ok: true;
+  readonly researchRunId: string;
+  readonly status: "awaiting-pricing-and-gates" | "complete";
+  readonly structuralStatus: "contract-verified";
+  readonly claimStatus: "unverified" | "verified" | "degraded" | "rejected";
+  readonly registrationStatus: "preregistered" | "exploratory";
+  readonly artifactHash: string;
+  readonly planHash: string;
+  readonly contractHash: string;
+  readonly candidateHash: string;
+  readonly executionCount: number;
+  readonly requiredEvidence: readonly ["pricing", "costs", "statistical-gates"] | readonly [];
+  readonly evidenceReference: string;
+  readonly researchLogReference: ".veil/research-log.md";
+  readonly experimentId?: string;
+  readonly verdict?: "accepted" | "degraded" | "rejected";
+  readonly experimentArchiveReference?: string;
+}
+
+export interface VeilBacktestFailure extends PublicVeilError {
+  readonly format: "veil.agent-tool-result.v0";
+  readonly tool: "veil-backtest";
+  readonly researchRunId: string;
+}
+
+export type VeilBacktestToolResult = VeilBacktestSuccess | VeilBacktestFailure;
+
+export interface VeilExperimentArchive {
+  readonly format: "veil.experiment-archive.v0";
+  readonly archiveHash: string;
+  readonly execution: {
+    readonly format: "veil.experiment-execution.v0";
+    readonly experiment: {
+      readonly status: "complete";
+      readonly experimentId: string;
+      readonly candidateHash: string;
+      readonly artifactHash: string;
+      readonly planHash: string;
+      readonly contractHash: string;
+      readonly hypothesis: {
+        readonly hypothesisRef: string;
+        readonly registrationStatus: "preregistered" | "exploratory";
+      };
+      readonly verdict: "accepted" | "degraded" | "rejected";
+      readonly claimStatus: "verified" | "degraded" | "rejected";
+    };
+  };
+}
+
 export interface VeilPublicApi {
   readonly loadVeilProject: (cwd: string) => Promise<VeilProject>;
   readonly createVeilExtension: (options?: VeilExtensionOptions) => InlineExtension;
   readonly describeVeilError: (error: unknown) => PublicVeilError;
+  readonly createHypothesisEntry: (input: {
+    readonly hypothesisRef?: string;
+    readonly statement: string;
+    readonly ideaAvailableAt: string;
+    readonly captureMode: "automatic" | "explicit";
+  }) => VeilHypothesisEntry;
+  readonly executeVeilDataTool: (
+    input: {
+      readonly dataset: string;
+      readonly mode: "point" | "panel";
+      readonly as_of: string;
+      readonly columns?: readonly string[];
+      readonly output: "summary" | "arrow";
+    },
+    context: {
+      readonly project: VeilProject;
+      readonly appendEntry: (customType: string, data: unknown) => void;
+    },
+  ) => Promise<VeilDataToolResult>;
+  readonly executeVeilBacktestTool: (
+    input: { readonly request: string },
+    context: {
+      readonly project: VeilProject;
+      readonly getBranch: () => readonly unknown[];
+      readonly appendEntry: (customType: string, data: unknown) => void;
+      readonly signal?: AbortSignal;
+    },
+  ) => Promise<VeilBacktestToolResult>;
+  readonly loadProjectExperiment: (
+    projectRoot: string,
+    experimentId: string,
+  ) => Promise<VeilExperimentArchive>;
   readonly VEIL_PROJECT_FORMAT: "veil.project.v0";
+  readonly VEIL_HYPOTHESIS_ENTRY: "veil.hypothesis.v0";
   readonly VEIL_DATA_TOOL: "veil-data";
   readonly VEIL_BACKTEST_TOOL: "veil-backtest";
   readonly VEIL_MEMORY_TOOL: "veil-memory";
@@ -153,8 +266,18 @@ function isVeilPublicApi(input: unknown): input is VeilPublicApi {
     typeof input.createVeilExtension === "function" &&
     "describeVeilError" in input &&
     typeof input.describeVeilError === "function" &&
+    "createHypothesisEntry" in input &&
+    typeof input.createHypothesisEntry === "function" &&
+    "executeVeilDataTool" in input &&
+    typeof input.executeVeilDataTool === "function" &&
+    "executeVeilBacktestTool" in input &&
+    typeof input.executeVeilBacktestTool === "function" &&
+    "loadProjectExperiment" in input &&
+    typeof input.loadProjectExperiment === "function" &&
     "VEIL_PROJECT_FORMAT" in input &&
     input.VEIL_PROJECT_FORMAT === "veil.project.v0" &&
+    "VEIL_HYPOTHESIS_ENTRY" in input &&
+    input.VEIL_HYPOTHESIS_ENTRY === "veil.hypothesis.v0" &&
     "VEIL_DATA_TOOL" in input &&
     input.VEIL_DATA_TOOL === "veil-data" &&
     "VEIL_BACKTEST_TOOL" in input &&

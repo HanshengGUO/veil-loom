@@ -185,7 +185,20 @@ function fakeVeilApi(projectRoot: string, project?: VeilProject): LoadedVeilApi 
         message: `Invalid declaration at ${projectRoot}/.veil/project.yaml`,
         remedy: "x".repeat(2_000),
       }),
+      createHypothesisEntry: () => {
+        throw new Error("unused");
+      },
+      executeVeilDataTool: async () => {
+        throw new Error("unused");
+      },
+      executeVeilBacktestTool: async () => {
+        throw new Error("unused");
+      },
+      loadProjectExperiment: async () => {
+        throw new Error("unused");
+      },
       VEIL_PROJECT_FORMAT: "veil.project.v0",
+      VEIL_HYPOTHESIS_ENTRY: "veil.hypothesis.v0",
       VEIL_DATA_TOOL: "veil-data",
       VEIL_BACKTEST_TOOL: "veil-backtest",
       VEIL_MEMORY_TOOL: "veil-memory",

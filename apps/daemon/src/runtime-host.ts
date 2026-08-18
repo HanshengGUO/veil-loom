@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import {
   isLoomPortableId,
   type LoomAcceptedCommandResponse,
+  type LoomCreatePromotionRequest,
   type LoomProfileDescriptor,
   type LoomProjectReadinessResponse,
+  type LoomPromotionAcceptedResponse,
   type LoomSelection,
   type LoomSessionProfile,
 } from "@veilquant/loom-protocol";
@@ -13,6 +15,11 @@ import {
   type DeterministicPiSessionFactoryOptions,
 } from "./pi/deterministic-session.js";
 import { LoomProjectRegistry } from "./project-readiness.js";
+import {
+  LoomPromotionCoordinator,
+  type PreparedPromotion,
+  PromotionPreparationError,
+} from "./promotion.js";
 import { DailyFactorReferenceAdapter } from "./reference-backtest/reference-adapter.js";
 import { ResearchArtifactStore } from "./research-artifacts.js";
 import {
@@ -24,7 +31,7 @@ import {
 import { SelectionService } from "./selection-service.js";
 import { projectSessionRecovery } from "./session-recovery.js";
 
-type RuntimeIdKind = "session" | "command" | "task" | "message";
+type RuntimeIdKind = "session" | "command" | "task" | "message" | "attempt";
 
 export type RuntimeIdSource = (kind: RuntimeIdKind) => string;
 
@@ -33,6 +40,7 @@ export interface RuntimeHostOptions {
   eventStores: SessionEventStoreRegistry;
   projects: LoomProjectRegistry;
   selections?: SelectionService;
+  promotions?: LoomPromotionCoordinator;
   idSource?: RuntimeIdSource;
 }
 
@@ -55,6 +63,12 @@ export interface CancelRuntimeTaskInput {
   taskId: string;
 }
 
+export interface CreateRuntimePromotionInput {
+  projectId: string;
+  sourceSessionId: string;
+  request: LoomCreatePromotionRequest;
+}
+
 export interface CreateRuntimeIdentity {
   sessionId: string;
   commandId: string;
@@ -64,6 +78,13 @@ export interface MessageRuntimeIdentity {
   commandId: string;
   taskId: string;
   messageId: string;
+}
+
+export interface PromotionRuntimeIdentity {
+  sessionId: string;
+  commandId: string;
+  taskId: string;
+  attemptId: string;
 }
 
 export interface RuntimeReconciliationReport {
@@ -82,6 +103,7 @@ export class LoomRuntimeHost {
   readonly #projects: LoomProjectRegistry;
   readonly #idSource: RuntimeIdSource;
   readonly #selections: SelectionService | undefined;
+  readonly #promotions: LoomPromotionCoordinator | undefined;
 
   constructor(options: RuntimeHostOptions) {
     this.#adapters = new Map(
@@ -94,6 +116,7 @@ export class LoomRuntimeHost {
     this.#projects = options.projects;
     this.#idSource = options.idSource ?? defaultIdSource;
     this.#selections = options.selections;
+    this.#promotions = options.promotions;
   }
 
   profileDescriptors(): readonly LoomProfileDescriptor[] {
@@ -240,6 +263,92 @@ export class LoomRuntimeHost {
     return adapter.cancel({ ...input, commandId: resolvedCommandId });
   }
 
+  async createPromotion(
+    input: CreateRuntimePromotionInput,
+    identity: PromotionRuntimeIdentity = {
+      sessionId: "",
+      commandId: "",
+      taskId: "",
+      attemptId: "",
+    },
+  ): Promise<LoomPromotionAcceptedResponse> {
+    assertRuntimeId(input.projectId);
+    assertRuntimeId(input.sourceSessionId);
+    const sourceAdapter = this.#requireSession(input.projectId, input.sourceSessionId);
+    if (sourceAdapter.descriptor.id !== "raw-pi") {
+      throw new RuntimeAdapterError(
+        "PROMOTION_NOT_AVAILABLE",
+        "Only a Raw Pi session can start this promotion path",
+      );
+    }
+    if (this.#promotions === undefined) {
+      throw new RuntimeAdapterError(
+        "RUNTIME_UNAVAILABLE",
+        "The promotion coordinator is unavailable",
+      );
+    }
+    let promotion: PreparedPromotion;
+    try {
+      promotion = await this.#promotions.prepare(input);
+    } catch (error) {
+      if (error instanceof PromotionPreparationError) {
+        throw new RuntimeAdapterError(error.code, error.message, { cause: error });
+      }
+      throw error;
+    }
+
+    const adapter = this.#adapters.get("veil");
+    if (adapter === undefined) {
+      throw new RuntimeAdapterError("PROFILE_UNAVAILABLE", "The Veil profile is unavailable");
+    }
+    const sessionId = identity.sessionId || this.#nextId("session");
+    const commandId = identity.commandId || this.#nextId("command");
+    const taskId = identity.taskId || this.#nextId("task");
+    const attemptId = identity.attemptId || this.#nextId("attempt");
+    for (const id of [sessionId, commandId, taskId, attemptId]) assertRuntimeId(id);
+    if (sessionId === input.sourceSessionId) {
+      throw new RuntimeAdapterError(
+        "PROMOTION_NOT_AVAILABLE",
+        "A promotion must create a new Veil session",
+      );
+    }
+    const key = runtimeKey(input.projectId, sessionId);
+    if (this.#sessions.has(key)) {
+      throw new RuntimeAdapterError("SESSION_CONFLICT", "The target session is already registered");
+    }
+
+    await adapter.start({
+      projectId: input.projectId,
+      sessionId,
+      commandId,
+      title: "Veil verification attempt",
+    });
+    this.#sessions.set(key, adapter);
+    try {
+      await adapter.promote({
+        projectId: input.projectId,
+        sessionId,
+        commandId,
+        taskId,
+        attemptId,
+        promotion,
+      });
+    } catch (error) {
+      await adapter.close({ projectId: input.projectId, sessionId }).catch(() => undefined);
+      this.#sessions.delete(key);
+      throw error;
+    }
+    return {
+      format: "loom.promotion.accepted.v0",
+      commandId,
+      projectId: input.projectId,
+      sourceSessionId: input.sourceSessionId,
+      sessionId,
+      taskId,
+      attemptId,
+    };
+  }
+
   async closeSession(projectId: string, sessionId: string): Promise<void> {
     const key = runtimeKey(projectId, sessionId);
     const adapter = this.#sessions.get(key);
@@ -286,6 +395,11 @@ export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): Lo
   const selections =
     options.selections ?? new SelectionService({ artifacts, eventStores: options.eventStores });
   const projects = options.projects ?? new LoomProjectRegistry({ fallbackRoot: options.cwd });
+  const promotions = new LoomPromotionCoordinator({
+    artifacts,
+    eventStores: options.eventStores,
+    projects,
+  });
   const sessionFactory = new DeterministicPiSessionFactory({ referenceBacktests }, options.fixture);
   const rawPi = new RawPiRuntimeAdapter({
     eventStores: options.eventStores,
@@ -306,6 +420,7 @@ export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): Lo
     eventStores: options.eventStores,
     projects,
     selections,
+    promotions,
     ...(options.idSource === undefined ? {} : { idSource: options.idSource }),
   });
 }

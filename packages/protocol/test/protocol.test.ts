@@ -9,16 +9,21 @@ import {
   isLoomBacktestView,
   isLoomBlobRecord,
   isLoomCancelTaskRequest,
+  isLoomCreatePromotionRequest,
   isLoomCreateSelectionRequest,
   isLoomCreateSessionRequest,
   isLoomEventEnvelope,
   isLoomPiRuntimeDescriptor,
   isLoomPortableId,
   isLoomProjectReadinessResponse,
+  isLoomPromotionAcceptedResponse,
   isLoomPublishedViewDescriptor,
   isLoomSelection,
   isLoomSelectionCreatedPayload,
   isLoomSendMessageRequest,
+  isLoomVeilExperimentRecordedPayload,
+  isLoomVeilStageChangedPayload,
+  isLoomVeilVerificationStartedPayload,
   LOOM_PROFILE_DESCRIPTORS,
   LoomAssuranceSchema,
   type LoomBacktestImport,
@@ -247,6 +252,130 @@ describe("Loom command protocol", () => {
     };
     expect(isLoomPiRuntimeDescriptor(runtime)).toBe(true);
     expect(isLoomPiRuntimeDescriptor({ ...runtime, apiKey: "must-not-leak" })).toBe(false);
+  });
+});
+
+describe("Loom Veil promotion protocol", () => {
+  const request = {
+    format: "loom.promotion.create.v0",
+    viewId: `view_${"a".repeat(64)}`,
+    artifactReference: "artifact/daily-factor.mjs",
+    hypothesis: { statement: "The signal survives independent out-of-sample verification." },
+  } as const;
+  const started = {
+    format: "loom.veil-verification-started.v0",
+    attemptId: "attempt-1",
+    commandId: "command-1",
+    taskId: "task-1",
+    relation: "derived-from-exploration",
+    source: { sessionId: "raw-session", viewId: request.viewId },
+    artifact: {
+      id: "daily-factor-v0",
+      reference: request.artifactReference,
+      digest: `sha256:${"1".repeat(64)}`,
+    },
+    hypothesis: { ref: "hypothesis:example", statement: request.hypothesis.statement },
+  } as const;
+  const experiment = {
+    format: "loom.veil-experiment-recorded.v0",
+    attemptId: "attempt-1",
+    taskId: "task-1",
+    experimentId: `sha256:${"2".repeat(64)}`,
+    archiveHash: `sha256:${"3".repeat(64)}`,
+    researchRunId: "run:example",
+    verdict: "rejected",
+    claimStatus: "rejected",
+    registrationStatus: "preregistered",
+    artifactHash: `sha256:${"4".repeat(64)}`,
+    planHash: `sha256:${"5".repeat(64)}`,
+    contractHash: `sha256:${"6".repeat(64)}`,
+    candidateHash: `sha256:${"7".repeat(64)}`,
+    executionCount: 33,
+    assurance: {
+      format: "loom.assurance.v0",
+      state: "rejected",
+      issuer: "veil",
+      evidenceRefs: [`sha256:${"2".repeat(64)}`, `sha256:${"3".repeat(64)}`],
+      limitations: ["The source Raw result remains exploratory."],
+    },
+  } as const;
+
+  it("accepts the minimal handoff, new-attempt receipt, and exact Veil records", () => {
+    expect(isLoomCreatePromotionRequest(request)).toBe(true);
+    expect(
+      isLoomPromotionAcceptedResponse({
+        format: "loom.promotion.accepted.v0",
+        commandId: "command-1",
+        projectId: "project-1",
+        sourceSessionId: "raw-session",
+        sessionId: "veil-session",
+        taskId: "task-1",
+        attemptId: "attempt-1",
+      }),
+    ).toBe(true);
+    expect(isLoomVeilVerificationStartedPayload(started)).toBe(true);
+    expect(
+      isLoomVeilStageChangedPayload({
+        format: "loom.veil-stage-changed.v0",
+        attemptId: "attempt-1",
+        taskId: "task-1",
+        stage: "development-data",
+        status: "completed",
+      }),
+    ).toBe(true);
+    expect(isLoomVeilExperimentRecordedPayload(experiment)).toBe(true);
+  });
+
+  it("rejects metric injection, unsafe paths, same-session receipts, and forged assurance", () => {
+    expect(isLoomCreatePromotionRequest({ ...request, metrics: [{ sharpe: 9 }] })).toBe(false);
+    expect(isLoomCreatePromotionRequest({ ...request, artifactReference: "../factor.mjs" })).toBe(
+      false,
+    );
+    expect(isLoomCreatePromotionRequest({ ...request, artifactReference: "/tmp/factor.mjs" })).toBe(
+      false,
+    );
+    expect(
+      isLoomCreatePromotionRequest({ ...request, artifactReference: "artifact/factor#x.mjs" }),
+    ).toBe(false);
+    expect(
+      isLoomPromotionAcceptedResponse({
+        format: "loom.promotion.accepted.v0",
+        commandId: "command-1",
+        projectId: "project-1",
+        sourceSessionId: "same-session",
+        sessionId: "same-session",
+        taskId: "task-1",
+        attemptId: "attempt-1",
+      }),
+    ).toBe(false);
+    expect(isLoomVeilVerificationStartedPayload({ ...started, rawMetrics: { sharpe: 9 } })).toBe(
+      false,
+    );
+    expect(
+      isLoomVeilStageChangedPayload({
+        format: "loom.veil-stage-changed.v0",
+        attemptId: "attempt-1",
+        taskId: "task-1",
+        stage: "development-data",
+        status: "running",
+      }),
+    ).toBe(false);
+    expect(
+      isLoomVeilExperimentRecordedPayload({
+        ...experiment,
+        verdict: "accepted",
+        claimStatus: "verified",
+      }),
+    ).toBe(false);
+    expect(
+      isLoomVeilExperimentRecordedPayload({
+        ...experiment,
+        assurance: {
+          ...experiment.assurance,
+          evidenceRefs: [...experiment.assurance.evidenceRefs].reverse(),
+        },
+      }),
+    ).toBe(false);
   });
 });
 

@@ -1,6 +1,9 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import {
   isLoomPiRuntimeDescriptor,
+  isLoomVeilExperimentRecordedPayload,
+  isLoomVeilStageChangedPayload,
+  isLoomVeilVerificationStartedPayload,
   type LoomAcceptedCommandResponse,
   type LoomPiRuntimeDescriptor,
   type LoomProfileDescriptor,
@@ -16,7 +19,24 @@ import {
   publishedViewFromToolResult,
 } from "./pi/loom-extension.js";
 import { LoomProjectRegistry, type VeilProjectContext } from "./project-readiness.js";
+import {
+  DAILY_FACTOR_DECISION_SCHEDULE,
+  type PreparedPromotion,
+  writeDailyFactorPromotionRequest,
+} from "./promotion.js";
 import type { SessionRecoveryPlan } from "./session-recovery.js";
+import type {
+  VeilBacktestSuccess,
+  VeilDataToolResult,
+  VeilExperimentArchive,
+  VeilHypothesisEntry,
+} from "./veil-api.js";
+
+type CompleteVeilBacktestResult = VeilBacktestSuccess & {
+  readonly experimentId: string;
+  readonly verdict: "accepted" | "degraded" | "rejected";
+  readonly experimentArchiveReference: string;
+};
 
 export type RuntimeAdapterErrorCode =
   | "PROFILE_UNAVAILABLE"
@@ -26,6 +46,7 @@ export type RuntimeAdapterErrorCode =
   | "SESSION_CONFLICT"
   | "TASK_NOT_FOUND"
   | "TASK_NOT_CANCELLABLE"
+  | "PROMOTION_NOT_AVAILABLE"
   | "RUNTIME_UNAVAILABLE";
 
 export class RuntimeAdapterError extends Error {
@@ -69,6 +90,15 @@ export interface CancelTaskInput {
   taskId: string;
 }
 
+export interface StartPromotionInput {
+  projectId: string;
+  sessionId: string;
+  commandId: string;
+  taskId: string;
+  attemptId: string;
+  promotion: PreparedPromotion;
+}
+
 export interface CloseSessionInput {
   projectId: string;
   sessionId: string;
@@ -79,6 +109,7 @@ export interface LoomRuntimeAdapter {
   start(input: StartSessionInput): Promise<RuntimeSession>;
   recover(input: SessionRecoveryPlan): Promise<RuntimeSession | undefined>;
   send(input: SendMessageInput): Promise<LoomAcceptedCommandResponse>;
+  promote(input: StartPromotionInput): Promise<void>;
   cancel(input: CancelTaskInput): Promise<LoomAcceptedCommandResponse>;
   close(input: CloseSessionInput): Promise<void>;
   waitForIdle?(projectId: string, sessionId: string): Promise<void>;
@@ -87,6 +118,7 @@ export interface LoomRuntimeAdapter {
 interface RuntimeState extends RuntimeSession {
   store: SessionEventStore;
   pi: HostedPiSession;
+  project: RuntimeProjectContext;
   activeTask: ActiveTask | undefined;
   knownTasks: Set<string>;
 }
@@ -104,6 +136,7 @@ interface ActiveTask {
   projectionError: unknown;
   projectionQueue: Promise<void>;
   runPromise: Promise<void>;
+  abort: () => Promise<void>;
 }
 
 export interface PiRuntimeAdapterOptions {
@@ -220,6 +253,7 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
         runtime: pi.descriptor,
         store,
         pi,
+        project,
         activeTask: undefined,
         knownTasks: new Set(),
       };
@@ -346,6 +380,7 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
         runtime: pi.descriptor,
         store,
         pi,
+        project,
         activeTask: undefined,
         knownTasks: new Set(input.knownTaskIds),
       };
@@ -375,6 +410,7 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
       projectionError: undefined,
       projectionQueue: Promise.resolve(),
       runPromise: Promise.resolve(),
+      abort: () => state.pi.session.abort(),
     };
     state.activeTask = task;
     state.knownTasks.add(task.id);
@@ -413,6 +449,118 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
     return accepted(input);
   }
 
+  async promote(input: StartPromotionInput): Promise<void> {
+    if (this.descriptor.id !== "veil") {
+      throw new RuntimeAdapterError(
+        "PROMOTION_NOT_AVAILABLE",
+        "Only a Veil session can own a verification attempt",
+      );
+    }
+    const state = this.#requireSession(input.projectId, input.sessionId);
+    const veil = state.project.veil;
+    if (veil === undefined) {
+      throw new RuntimeAdapterError("PROJECT_NOT_READY", "The Veil project context is unavailable");
+    }
+    if (state.activeTask !== undefined) {
+      throw new RuntimeAdapterError("SESSION_BUSY", "The session already has an active task");
+    }
+    if (input.promotion.sourceSessionId === input.sessionId) {
+      throw new RuntimeAdapterError(
+        "PROMOTION_NOT_AVAILABLE",
+        "A verification attempt must use a new session",
+      );
+    }
+
+    const controller = new AbortController();
+    let hypothesis: VeilHypothesisEntry;
+    try {
+      hypothesis = veil.veil.api.createHypothesisEntry({
+        statement: input.promotion.hypothesisStatement,
+        ideaAvailableAt: new Date().toISOString(),
+        captureMode: "explicit",
+      });
+      assertVeilHypothesis(hypothesis, input.promotion.hypothesisStatement);
+      const manager = state.pi.session.sessionManager;
+      const hypothesisEntryId = manager.appendCustomEntry(
+        veil.veil.api.VEIL_HYPOTHESIS_ENTRY,
+        hypothesis,
+      );
+      const hypothesisTimestamp = branchEntryTimestamp(manager.getBranch(), hypothesisEntryId);
+      await waitPastTimestamp(hypothesisTimestamp, controller.signal);
+    } catch (error) {
+      throw new RuntimeAdapterError(
+        "PROMOTION_NOT_AVAILABLE",
+        "Veil rejected or could not record the portable hypothesis",
+        { cause: error },
+      );
+    }
+
+    const task: ActiveTask = {
+      id: input.taskId,
+      commandId: input.commandId,
+      messageId: input.attemptId,
+      cancelRequested: false,
+      acceptingCancel: true,
+      assistantTurn: 0,
+      currentAssistant: undefined,
+      sawAborted: false,
+      sawError: false,
+      projectionError: undefined,
+      projectionQueue: Promise.resolve(),
+      runPromise: Promise.resolve(),
+      abort: async () => controller.abort(),
+    };
+    const started = {
+      format: "loom.veil-verification-started.v0",
+      attemptId: input.attemptId,
+      commandId: input.commandId,
+      taskId: input.taskId,
+      relation: "derived-from-exploration",
+      source: {
+        sessionId: input.promotion.sourceSessionId,
+        viewId: input.promotion.sourceViewId,
+      },
+      artifact: input.promotion.artifact,
+      hypothesis: {
+        ref: hypothesis.hypothesisRef,
+        statement: hypothesis.statement,
+      },
+    } as const;
+    if (!isLoomVeilVerificationStartedPayload(started)) {
+      throw new RuntimeAdapterError(
+        "PROMOTION_NOT_AVAILABLE",
+        "The verification attempt metadata is invalid",
+      );
+    }
+
+    state.activeTask = task;
+    state.knownTasks.add(task.id);
+    try {
+      await state.store.append({
+        type: "session.status_changed",
+        payload: { status: "busy" },
+      });
+      await state.store.append({
+        type: "task.started",
+        payload: {
+          taskId: task.id,
+          commandId: task.commandId,
+          kind: "veil-verification",
+          label: "Run independent Veil verification",
+        },
+      });
+      await state.store.append({ type: "veil.verification_started", payload: started });
+    } catch (error) {
+      state.activeTask = undefined;
+      state.knownTasks.delete(task.id);
+      controller.abort();
+      throw error;
+    }
+
+    task.runPromise = this.#runPromotion(state, task, input, hypothesis, controller.signal);
+    void task.runPromise.catch(() => undefined);
+  }
+
   async cancel(input: CancelTaskInput): Promise<LoomAcceptedCommandResponse> {
     const state = this.#requireSession(input.projectId, input.sessionId);
     if (!state.knownTasks.has(input.taskId)) {
@@ -438,7 +586,7 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
       task.cancelRequested = false;
       throw error;
     }
-    void state.pi.session.abort().catch(() => undefined);
+    void task.abort().catch(() => undefined);
     return accepted(input);
   }
 
@@ -449,7 +597,7 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
     if (state.activeTask !== undefined) {
       state.activeTask.cancelRequested = true;
       state.activeTask.acceptingCancel = false;
-      await state.pi.session.abort();
+      await state.activeTask.abort();
       await state.activeTask.runPromise;
     }
     state.pi.dispose();
@@ -538,6 +686,114 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
           },
         });
       } else {
+        await state.store.append({
+          type: "task.completed",
+          payload: { taskId: task.id },
+        });
+      }
+      await state.store.append({
+        type: "session.status_changed",
+        payload: { status: "ready" },
+      });
+    } finally {
+      if (state.activeTask === task) state.activeTask = undefined;
+    }
+  }
+
+  async #runPromotion(
+    state: RuntimeState,
+    task: ActiveTask,
+    input: StartPromotionInput,
+    hypothesis: VeilHypothesisEntry,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const veil = state.project.veil;
+    if (veil === undefined) throw new Error("The Veil project context disappeared");
+    const api = veil.veil.api;
+    const manager = state.pi.session.sessionManager;
+    let failure: unknown;
+    let experiment:
+      | {
+          readonly result: CompleteVeilBacktestResult;
+          readonly archive: VeilExperimentArchive;
+        }
+      | undefined;
+
+    try {
+      throwIfPromotionAborted(signal);
+      const development = await api.executeVeilDataTool(
+        {
+          dataset: "daily-factor-prices",
+          mode: "panel",
+          as_of: DAILY_FACTOR_DECISION_SCHEDULE.at(-1) ?? "2024-02-04T00:00:00.000Z",
+          columns: ["ticker", "close", "volume"],
+          output: "summary",
+        },
+        {
+          project: veil.project,
+          appendEntry: (customType, data) => {
+            manager.appendCustomEntry(customType, data);
+          },
+        },
+      );
+      assertDevelopmentRead(development);
+      throwIfPromotionAborted(signal);
+      await appendVeilStage(state.store, input, "development-data", "completed");
+      const requestReference = await writeDailyFactorPromotionRequest({
+        projectRoot: veil.root,
+        attemptId: input.attemptId,
+        hypothesisRef: hypothesis.hypothesisRef,
+        developmentReadSetId: development.evidence.readSetId,
+        promotion: input.promotion,
+      });
+      throwIfPromotionAborted(signal);
+      await appendVeilStage(state.store, input, "independent-verification", "running");
+      const result = await api.executeVeilBacktestTool(
+        { request: requestReference },
+        {
+          project: veil.project,
+          getBranch: () => manager.getBranch(),
+          appendEntry: (customType, data) => {
+            manager.appendCustomEntry(customType, data);
+          },
+          signal,
+        },
+      );
+      throwIfPromotionAborted(signal);
+      if (!result.ok) throw new Error("Veil did not issue a promotion result");
+      assertCompleteVeilResult(result);
+      const archive = await api.loadProjectExperiment(veil.root, result.experimentId);
+      assertMatchingVeilArchive(result, archive, hypothesis.hypothesisRef);
+      throwIfPromotionAborted(signal);
+      experiment = { result, archive };
+    } catch (error) {
+      failure = error;
+    }
+
+    task.acceptingCancel = false;
+    try {
+      if (task.cancelRequested || signal.aborted) {
+        await state.store.append({
+          type: "task.cancelled",
+          payload: { taskId: task.id },
+        });
+      } else if (failure !== undefined || experiment === undefined) {
+        await state.store.append({
+          type: "task.failed",
+          payload: {
+            taskId: task.id,
+            code: "VEIL_VERIFICATION_FAILED",
+            remedy:
+              "Inspect the trusted daemon and Veil diagnostics, correct the project or artifact, and create a new attempt.",
+          },
+        });
+      } else {
+        const payload = experimentPayload(input, experiment.result, experiment.archive);
+        if (!isLoomVeilExperimentRecordedPayload(payload)) {
+          throw new Error("Veil returned an invalid Experiment projection");
+        }
+        await appendVeilStage(state.store, input, "independent-verification", "completed");
+        await state.store.append({ type: "veil.experiment_recorded", payload });
         await state.store.append({
           type: "task.completed",
           payload: { taskId: task.id },
@@ -775,4 +1031,211 @@ function visibleAssistantText(content: readonly unknown[]): string {
 
 function publicToolLabel(toolName: string): string {
   return toolName === LOOM_REFERENCE_BACKTEST_TOOL_NAME ? "Run reference backtest" : "Pi tool";
+}
+
+const VEIL_SHA256 = /^sha256:[a-f0-9]{64}$/u;
+const VEIL_PORTABLE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u;
+
+function assertVeilHypothesis(input: VeilHypothesisEntry, statement: string): void {
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    input.format !== "veil.hypothesis.v0" ||
+    !VEIL_PORTABLE_REFERENCE.test(input.hypothesisRef) ||
+    input.statement !== statement ||
+    input.captureMode !== "explicit" ||
+    !isCanonicalTime(input.ideaAvailableAt)
+  ) {
+    throw new Error("Veil returned an invalid hypothesis entry");
+  }
+}
+
+function assertDevelopmentRead(input: VeilDataToolResult): asserts input is VeilDataToolResult {
+  const expectedAsOf = DAILY_FACTOR_DECISION_SCHEDULE.at(-1);
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    input.format !== "veil.agent-tool-result.v0" ||
+    input.tool !== "veil-data" ||
+    input.ok !== true ||
+    input.dataset !== "daily-factor-prices" ||
+    input.adapterVersion !== "2026-08-18" ||
+    input.view.mode !== "panel" ||
+    input.view.grade !== "exploration-grade" ||
+    input.view.asOf !== expectedAsOf ||
+    !Number.isSafeInteger(input.view.rowCount) ||
+    input.view.rowCount < 1 ||
+    input.exportReference !== null ||
+    !VEIL_SHA256.test(input.evidence.readSetId) ||
+    !VEIL_SHA256.test(input.evidence.resultHash) ||
+    !VEIL_SHA256.test(input.evidence.arrowHash)
+  ) {
+    throw new Error("Veil returned an invalid development data record");
+  }
+}
+
+function assertCompleteVeilResult(
+  input: VeilBacktestSuccess,
+): asserts input is CompleteVeilBacktestResult {
+  const expectedClaimStatus =
+    input.verdict === "accepted"
+      ? "verified"
+      : input.verdict === "degraded"
+        ? "degraded"
+        : input.verdict === "rejected"
+          ? "rejected"
+          : undefined;
+  if (
+    input.format !== "veil.agent-tool-result.v0" ||
+    input.tool !== "veil-backtest" ||
+    input.ok !== true ||
+    input.status !== "complete" ||
+    input.structuralStatus !== "contract-verified" ||
+    input.registrationStatus !== "preregistered" ||
+    !VEIL_PORTABLE_REFERENCE.test(input.researchRunId) ||
+    typeof input.experimentId !== "string" ||
+    !VEIL_SHA256.test(input.experimentId) ||
+    expectedClaimStatus === undefined ||
+    input.claimStatus !== expectedClaimStatus ||
+    input.requiredEvidence.length !== 0 ||
+    !/^\.veil\/runs\/[a-f0-9]{64}\.json$/u.test(input.evidenceReference) ||
+    input.researchLogReference !== ".veil/research-log.md" ||
+    input.experimentArchiveReference !==
+      `.veil/experiments/${input.experimentId.slice("sha256:".length)}.json` ||
+    ![input.artifactHash, input.planHash, input.contractHash, input.candidateHash].every((hash) =>
+      VEIL_SHA256.test(hash),
+    ) ||
+    !Number.isSafeInteger(input.executionCount) ||
+    input.executionCount < 1
+  ) {
+    throw new Error("Veil returned an incomplete Experiment result");
+  }
+}
+
+function assertMatchingVeilArchive(
+  result: CompleteVeilBacktestResult,
+  archive: VeilExperimentArchive,
+  hypothesisRef: string,
+): void {
+  const experiment = archive?.execution?.experiment;
+  if (
+    archive?.format !== "veil.experiment-archive.v0" ||
+    !VEIL_SHA256.test(archive.archiveHash) ||
+    archive.execution.format !== "veil.experiment-execution.v0" ||
+    experiment === undefined ||
+    experiment.status !== "complete" ||
+    experiment.experimentId !== result.experimentId ||
+    experiment.candidateHash !== result.candidateHash ||
+    experiment.artifactHash !== result.artifactHash ||
+    experiment.planHash !== result.planHash ||
+    experiment.contractHash !== result.contractHash ||
+    experiment.hypothesis.hypothesisRef !== hypothesisRef ||
+    experiment.hypothesis.registrationStatus !== result.registrationStatus ||
+    experiment.verdict !== result.verdict ||
+    experiment.claimStatus !== result.claimStatus
+  ) {
+    throw new Error("The independently verified Experiment archive does not match the result");
+  }
+}
+
+function experimentPayload(
+  input: StartPromotionInput,
+  result: CompleteVeilBacktestResult,
+  archive: VeilExperimentArchive,
+) {
+  const limitations = [
+    "This assurance applies only to the new Veil attempt, not the source Raw Pi metrics.",
+    result.verdict === "accepted"
+      ? "Use the exact Experiment identity when citing or reproducing this result."
+      : result.verdict === "degraded"
+        ? "One or more Veil gates were degraded or unavailable; inspect the Experiment evidence."
+        : "Veil rejected the Experiment; it does not support a positive effect claim.",
+  ];
+  return {
+    format: "loom.veil-experiment-recorded.v0",
+    attemptId: input.attemptId,
+    taskId: input.taskId,
+    experimentId: result.experimentId,
+    archiveHash: archive.archiveHash,
+    researchRunId: result.researchRunId,
+    verdict: result.verdict,
+    claimStatus: result.claimStatus,
+    registrationStatus: result.registrationStatus,
+    artifactHash: result.artifactHash,
+    planHash: result.planHash,
+    contractHash: result.contractHash,
+    candidateHash: result.candidateHash,
+    executionCount: result.executionCount,
+    assurance: {
+      format: "loom.assurance.v0",
+      state: result.verdict,
+      issuer: "veil",
+      evidenceRefs: [result.experimentId, archive.archiveHash],
+      limitations,
+    },
+  } as const;
+}
+
+async function appendVeilStage(
+  store: SessionEventStore,
+  input: StartPromotionInput,
+  stage: "development-data" | "independent-verification",
+  status: "running" | "completed",
+): Promise<void> {
+  const payload = {
+    format: "loom.veil-stage-changed.v0",
+    attemptId: input.attemptId,
+    taskId: input.taskId,
+    stage,
+    status,
+  } as const;
+  if (!isLoomVeilStageChangedPayload(payload)) {
+    throw new Error("The Veil stage projection is invalid");
+  }
+  await store.append({ type: "veil.stage_changed", payload });
+}
+
+function branchEntryTimestamp(entries: readonly unknown[], entryId: string): string {
+  const matches = entries.filter(
+    (entry) =>
+      entry !== null &&
+      typeof entry === "object" &&
+      "id" in entry &&
+      entry.id === entryId &&
+      "timestamp" in entry &&
+      typeof entry.timestamp === "string" &&
+      isCanonicalTime(entry.timestamp),
+  ) as Array<{ readonly timestamp: string }>;
+  if (matches.length !== 1) throw new Error("The Veil hypothesis ledger entry is unavailable");
+  return matches[0]?.timestamp ?? "";
+}
+
+async function waitPastTimestamp(timestamp: string, signal: AbortSignal): Promise<void> {
+  const milliseconds = Date.parse(timestamp);
+  const delay = milliseconds - Date.now() + 1;
+  if (!Number.isFinite(milliseconds) || delay > 5_000) {
+    throw new Error("The Veil ledger clock is invalid");
+  }
+  if (delay <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, delay);
+    signal.addEventListener("abort", aborted, { once: true });
+    function done() {
+      signal.removeEventListener("abort", aborted);
+      resolve();
+    }
+    function aborted() {
+      clearTimeout(timer);
+      reject(new Error("The Veil verification was cancelled"));
+    }
+  });
+}
+
+function throwIfPromotionAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error("The Veil verification was cancelled");
+}
+
+function isCanonicalTime(input: string): boolean {
+  const milliseconds = Date.parse(input);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === input;
 }

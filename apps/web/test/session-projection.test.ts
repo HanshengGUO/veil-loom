@@ -195,7 +195,185 @@ describe("session projection reducer", () => {
       tasks: [{ id: "task-1", label: "Interrupted research", status: "interrupted" }],
     });
   });
+
+  it("projects an ordered independent Veil attempt without upgrading the Raw source", () => {
+    let state = createSessionProjection("project-a", "session-a");
+    const fixtures = [
+      event(1, "session.created", { profile: "veil" }),
+      event(2, "task.started", { taskId: "task-veil", label: "Independent verification" }),
+      event(3, "veil.verification_started", verificationStarted()),
+      event(4, "veil.stage_changed", veilStage("development-data", "completed")),
+      event(5, "veil.stage_changed", veilStage("independent-verification", "running")),
+      event(6, "veil.stage_changed", veilStage("independent-verification", "completed")),
+      event(7, "veil.experiment_recorded", experimentRecorded()),
+      event(8, "task.completed", { taskId: "task-veil" }),
+    ];
+    for (const fixture of fixtures) {
+      const result = applySessionEvent(state, fixture);
+      expect(result.outcome).toBe("applied");
+      state = result.state;
+    }
+
+    expect(state).toMatchObject({
+      profile: "veil",
+      veilAttempt: {
+        verification: {
+          relation: "derived-from-exploration",
+          source: { sessionId: "raw-session", viewId: `view_${"a".repeat(64)}` },
+        },
+        stage: { stage: "independent-verification", status: "completed" },
+        experiment: {
+          verdict: "rejected",
+          claimStatus: "rejected",
+          assurance: { state: "rejected", issuer: "veil" },
+        },
+      },
+      tasks: [{ id: "task-veil", status: "completed" }],
+    });
+  });
+
+  it("fails closed on forged or out-of-order Veil evidence", () => {
+    let state = createSessionProjection("project-a", "session-a");
+    state = applySessionEvent(state, event(1, "session.created", { profile: "veil" })).state;
+    const earlyStage = applySessionEvent(
+      state,
+      event(2, "veil.stage_changed", veilStage("development-data", "completed")),
+    );
+    expect(earlyStage).toMatchObject({
+      outcome: "rejected",
+      state: { lastSequence: 1, veilAttempt: undefined, issue: { kind: "protocol" } },
+    });
+
+    const orphaned = applySessionEvent(
+      state,
+      event(2, "veil.verification_started", verificationStarted()),
+    );
+    expect(orphaned).toMatchObject({ outcome: "rejected", state: { lastSequence: 1 } });
+
+    state = applySessionEvent(
+      state,
+      event(2, "task.started", { taskId: "task-veil", label: "Independent verification" }),
+    ).state;
+    state = applySessionEvent(
+      state,
+      event(3, "veil.verification_started", verificationStarted()),
+    ).state;
+    state = applySessionEvent(
+      state,
+      event(4, "veil.stage_changed", veilStage("development-data", "completed")),
+    ).state;
+    const skipped = applySessionEvent(
+      state,
+      event(5, "veil.stage_changed", veilStage("independent-verification", "completed")),
+    );
+    expect(skipped).toMatchObject({ outcome: "rejected", state: { lastSequence: 4 } });
+
+    state = applySessionEvent(
+      state,
+      event(5, "veil.stage_changed", veilStage("independent-verification", "running")),
+    ).state;
+    state = applySessionEvent(
+      state,
+      event(6, "veil.stage_changed", veilStage("independent-verification", "completed")),
+    ).state;
+    const prematureComplete = applySessionEvent(
+      state,
+      event(7, "task.completed", { taskId: "task-veil" }),
+    );
+    expect(prematureComplete).toMatchObject({ outcome: "rejected", state: { lastSequence: 6 } });
+    const forged = experimentRecorded();
+    const rejected = applySessionEvent(
+      state,
+      event(7, "veil.experiment_recorded", {
+        ...forged,
+        assurance: { ...forged.assurance, state: "accepted" },
+      }),
+    );
+    expect(rejected).toMatchObject({
+      outcome: "rejected",
+      state: {
+        lastSequence: 6,
+        veilAttempt: { experiment: undefined },
+        issue: { kind: "protocol" },
+      },
+    });
+  });
+
+  it("keeps an execution failure distinct from a rejected Experiment", () => {
+    let state = createSessionProjection("project-a", "session-a");
+    for (const fixture of [
+      event(1, "session.created", { profile: "veil" }),
+      event(2, "task.started", { taskId: "task-veil", label: "Independent verification" }),
+      event(3, "veil.verification_started", verificationStarted()),
+      event(4, "task.failed", { taskId: "task-veil", code: "VEIL_VERIFICATION_FAILED" }),
+    ]) {
+      state = applySessionEvent(state, fixture).state;
+    }
+    expect(state.veilAttempt?.experiment).toBeUndefined();
+    expect(state.tasks).toEqual([expect.objectContaining({ id: "task-veil", status: "failed" })]);
+  });
 });
+
+function verificationStarted() {
+  return {
+    format: "loom.veil-verification-started.v0",
+    attemptId: "attempt-veil",
+    commandId: "command-veil",
+    taskId: "task-veil",
+    relation: "derived-from-exploration",
+    source: { sessionId: "raw-session", viewId: `view_${"a".repeat(64)}` },
+    artifact: {
+      id: "daily-factor-v0",
+      reference: "artifact/daily-factor.mjs",
+      digest: `sha256:${"1".repeat(64)}`,
+    },
+    hypothesis: {
+      ref: "hypothesis:daily-factor",
+      statement: "The factor survives independent verification.",
+    },
+  };
+}
+
+function veilStage(
+  stage: "development-data" | "independent-verification",
+  status: "running" | "completed",
+) {
+  return {
+    format: "loom.veil-stage-changed.v0",
+    attemptId: "attempt-veil",
+    taskId: "task-veil",
+    stage,
+    status,
+  };
+}
+
+function experimentRecorded() {
+  const experimentId = `sha256:${"2".repeat(64)}`;
+  const archiveHash = `sha256:${"3".repeat(64)}`;
+  return {
+    format: "loom.veil-experiment-recorded.v0",
+    attemptId: "attempt-veil",
+    taskId: "task-veil",
+    experimentId,
+    archiveHash,
+    researchRunId: "run:daily-factor",
+    verdict: "rejected",
+    claimStatus: "rejected",
+    registrationStatus: "preregistered",
+    artifactHash: `sha256:${"4".repeat(64)}`,
+    planHash: `sha256:${"5".repeat(64)}`,
+    contractHash: `sha256:${"6".repeat(64)}`,
+    candidateHash: `sha256:${"7".repeat(64)}`,
+    executionCount: 33,
+    assurance: {
+      format: "loom.assurance.v0",
+      state: "rejected",
+      issuer: "veil",
+      evidenceRefs: [experimentId, archiveHash],
+      limitations: ["The source result remains exploratory."],
+    },
+  };
+}
 
 function selectionPayload() {
   return {

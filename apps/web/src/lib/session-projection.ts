@@ -2,11 +2,17 @@ import {
   isLoomPiRuntimeDescriptor,
   isLoomPublishedViewDescriptor,
   isLoomSelectionCreatedPayload,
+  isLoomVeilExperimentRecordedPayload,
+  isLoomVeilStageChangedPayload,
+  isLoomVeilVerificationStartedPayload,
   type LoomEventEnvelope,
   type LoomPiRuntimeDescriptor,
   type LoomPublishedViewDescriptor,
   type LoomSelection,
   type LoomSessionProfile,
+  type LoomVeilExperimentRecordedPayload,
+  type LoomVeilStageChangedPayload,
+  type LoomVeilVerificationStartedPayload,
 } from "@veilquant/loom-protocol";
 
 export interface ConversationEntry {
@@ -26,6 +32,12 @@ export interface TaskProjection {
 
 export interface ViewProjection extends LoomPublishedViewDescriptor {
   sequence: number;
+}
+
+export interface VeilAttemptProjection {
+  verification: LoomVeilVerificationStartedPayload;
+  stage: LoomVeilStageChangedPayload | undefined;
+  experiment: LoomVeilExperimentRecordedPayload | undefined;
 }
 
 export type SessionStreamIssue =
@@ -53,6 +65,7 @@ export interface SessionProjection {
   tasks: readonly TaskProjection[];
   activeView: ViewProjection | undefined;
   activeSelection: LoomSelection | undefined;
+  veilAttempt: VeilAttemptProjection | undefined;
   lastActivity: string | undefined;
   issue: SessionStreamIssue | undefined;
 }
@@ -78,6 +91,7 @@ export function createSessionProjection(projectId: string, sessionId: string): S
     tasks: [],
     activeView: undefined,
     activeSelection: undefined,
+    veilAttempt: undefined,
     lastActivity: undefined,
     issue: undefined,
   };
@@ -212,15 +226,39 @@ export function applySessionEvent(
       next = updateTask(next, event, "cancel-requested");
       break;
     case "task.cancelled":
+      if (invalidVeilTerminal(next, event, false)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The Veil verification terminal conflicts with its Experiment evidence.",
+        });
+      }
       next = updateTask(next, event, "cancelled");
       break;
     case "task.completed":
+      if (invalidVeilTerminal(next, event, true)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The Veil verification completed without matching Experiment evidence.",
+        });
+      }
       next = updateTask(next, event, "completed");
       break;
     case "task.failed":
+      if (invalidVeilTerminal(next, event, false)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The Veil verification terminal conflicts with its Experiment evidence.",
+        });
+      }
       next = updateTask(next, event, "failed");
       break;
     case "task.interrupted":
+      if (invalidVeilTerminal(next, event, false)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The Veil verification terminal conflicts with its Experiment evidence.",
+        });
+      }
       next = updateTask(next, event, "interrupted");
       break;
     case "view.published": {
@@ -263,6 +301,89 @@ export function applySessionEvent(
         });
       }
       next = { ...next, activeSelection: selection };
+      break;
+    }
+    case "veil.verification_started": {
+      if (
+        !isLoomVeilVerificationStartedPayload(event.payload) ||
+        next.profile !== "veil" ||
+        event.payload.source.sessionId === state.sessionId ||
+        next.veilAttempt !== undefined ||
+        !taskHasStatus(next, event.payload.taskId, "running")
+      ) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The stream returned an invalid Veil verification attempt.",
+        });
+      }
+      next = {
+        ...next,
+        veilAttempt: {
+          verification: event.payload,
+          stage: undefined,
+          experiment: undefined,
+        },
+        lastActivity: "Veil verification started",
+      };
+      break;
+    }
+    case "veil.stage_changed": {
+      if (!isLoomVeilStageChangedPayload(event.payload)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The stream returned an invalid Veil verification stage.",
+        });
+      }
+      const attempt = next.veilAttempt;
+      if (
+        attempt === undefined ||
+        event.payload.attemptId !== attempt.verification.attemptId ||
+        event.payload.taskId !== attempt.verification.taskId ||
+        !taskHasStatus(next, event.payload.taskId, "running", "cancel-requested") ||
+        !validVeilStageTransition(attempt.stage, event.payload)
+      ) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The Veil verification stage is out of order.",
+        });
+      }
+      next = {
+        ...next,
+        veilAttempt: { ...attempt, stage: event.payload },
+        lastActivity:
+          event.payload.stage === "development-data"
+            ? "Development data read complete"
+            : `Independent verification ${event.payload.status}`,
+      };
+      break;
+    }
+    case "veil.experiment_recorded": {
+      if (!isLoomVeilExperimentRecordedPayload(event.payload)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The stream returned invalid Veil Experiment evidence.",
+        });
+      }
+      const attempt = next.veilAttempt;
+      if (
+        attempt === undefined ||
+        attempt.experiment !== undefined ||
+        attempt.stage?.stage !== "independent-verification" ||
+        attempt.stage.status !== "completed" ||
+        event.payload.attemptId !== attempt.verification.attemptId ||
+        event.payload.taskId !== attempt.verification.taskId ||
+        !taskHasStatus(next, event.payload.taskId, "running")
+      ) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The Veil Experiment does not belong to the active verification attempt.",
+        });
+      }
+      next = {
+        ...next,
+        veilAttempt: { ...attempt, experiment: event.payload },
+        lastActivity: `Veil Experiment ${event.payload.verdict}`,
+      };
       break;
     }
     case "tool.started":
@@ -357,6 +478,44 @@ function sessionProfile(input: unknown): LoomSessionProfile | undefined {
 
 function stringField(input: unknown): string | undefined {
   return typeof input === "string" && input.length > 0 ? input : undefined;
+}
+
+function validVeilStageTransition(
+  previous: LoomVeilStageChangedPayload | undefined,
+  next: LoomVeilStageChangedPayload,
+): boolean {
+  if (previous === undefined) {
+    return next.stage === "development-data" && next.status === "completed";
+  }
+  if (previous.stage === "development-data") {
+    return next.stage === "independent-verification" && next.status === "running";
+  }
+  return (
+    previous.status === "running" && next.stage === previous.stage && next.status === "completed"
+  );
+}
+
+function taskHasStatus(
+  state: SessionProjection,
+  taskId: string,
+  ...statuses: readonly TaskProjection["status"][]
+): boolean {
+  const task = state.tasks.find((candidate) => candidate.id === taskId);
+  return task !== undefined && statuses.includes(task.status);
+}
+
+function invalidVeilTerminal(
+  state: SessionProjection,
+  event: LoomEventEnvelope,
+  expectsExperiment: boolean,
+): boolean {
+  const taskId = stringField(event.payload.taskId);
+  const attempt = state.veilAttempt;
+  return (
+    taskId !== undefined &&
+    attempt?.verification.taskId === taskId &&
+    (expectsExperiment ? attempt.experiment === undefined : attempt.experiment !== undefined)
+  );
 }
 
 function eventSignature(event: LoomEventEnvelope): string {

@@ -139,6 +139,7 @@ const EPOCH_PATTERN = "^-?(0|[1-9][0-9]*)$";
 
 export const LoomContentIdSchema = Type.String({ pattern: CONTENT_ID_PATTERN });
 export const LoomDigestSchema = Type.String({ pattern: DIGEST_PATTERN });
+export type LoomDigest = Static<typeof LoomDigestSchema>;
 export const LoomTimeUnitSchema = Type.Union([
   Type.Literal("ms"),
   Type.Literal("us"),
@@ -865,6 +866,82 @@ export function isLoomCancelTaskRequest(input: unknown): input is LoomCancelTask
   return Check(LoomCancelTaskRequestSchema, input);
 }
 
+export const LoomProjectFileReferenceSchema = Type.String({ minLength: 3, maxLength: 256 });
+
+export type LoomProjectFileReference = Static<typeof LoomProjectFileReferenceSchema>;
+
+export function isLoomProjectFileReference(input: unknown): input is LoomProjectFileReference {
+  if (typeof input !== "string" || input.length < 3 || input.length > 256) return false;
+  if (
+    input.includes("\\") ||
+    input.includes("\0") ||
+    input.startsWith("/") ||
+    input.endsWith("/")
+  ) {
+    return false;
+  }
+  const segments = input.split("/");
+  return (
+    segments.length >= 2 &&
+    segments.every(
+      (segment) =>
+        segment.length > 0 &&
+        segment.length <= 128 &&
+        /^[A-Za-z0-9._@+-]+$/u.test(segment) &&
+        segment !== "." &&
+        segment !== ".." &&
+        ![...segment].some((character) => (character.codePointAt(0) ?? 0) <= 0x1f),
+    )
+  );
+}
+
+export const LoomCreatePromotionRequestSchema = Type.Object(
+  {
+    format: Type.Literal("loom.promotion.create.v0"),
+    viewId: LoomContentIdSchema,
+    artifactReference: LoomProjectFileReferenceSchema,
+    hypothesis: Type.Object(
+      { statement: Type.String({ minLength: 1, maxLength: 4_096 }) },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false, $id: "LoomCreatePromotionRequest" },
+);
+
+export type LoomCreatePromotionRequest = Static<typeof LoomCreatePromotionRequestSchema>;
+
+export function isLoomCreatePromotionRequest(input: unknown): input is LoomCreatePromotionRequest {
+  return (
+    Check(LoomCreatePromotionRequestSchema, input) &&
+    input.viewId.startsWith("view_") &&
+    isLoomProjectFileReference(input.artifactReference) &&
+    input.hypothesis.statement.trim() === input.hypothesis.statement
+  );
+}
+
+export const LoomPromotionAcceptedResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.promotion.accepted.v0"),
+    commandId: LoomPortableIdSchema,
+    projectId: LoomPortableIdSchema,
+    sourceSessionId: LoomPortableIdSchema,
+    sessionId: LoomPortableIdSchema,
+    taskId: LoomPortableIdSchema,
+    attemptId: LoomPortableIdSchema,
+  },
+  { additionalProperties: false, $id: "LoomPromotionAcceptedResponse" },
+);
+
+export type LoomPromotionAcceptedResponse = Static<typeof LoomPromotionAcceptedResponseSchema>;
+
+export function isLoomPromotionAcceptedResponse(
+  input: unknown,
+): input is LoomPromotionAcceptedResponse {
+  return (
+    Check(LoomPromotionAcceptedResponseSchema, input) && input.sourceSessionId !== input.sessionId
+  );
+}
+
 export const LoomAcceptedCommandResponseSchema = Type.Object(
   {
     format: Type.Literal("loom.command.accepted.v0"),
@@ -883,6 +960,130 @@ export function isLoomAcceptedCommandResponse(
   input: unknown,
 ): input is LoomAcceptedCommandResponse {
   return Check(LoomAcceptedCommandResponseSchema, input);
+}
+
+const VEIL_REFERENCE_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$";
+
+export const LoomVeilVerificationStartedPayloadSchema = Type.Object(
+  {
+    format: Type.Literal("loom.veil-verification-started.v0"),
+    attemptId: LoomPortableIdSchema,
+    commandId: LoomPortableIdSchema,
+    taskId: LoomPortableIdSchema,
+    relation: Type.Literal("derived-from-exploration"),
+    source: Type.Object(
+      {
+        sessionId: LoomPortableIdSchema,
+        viewId: LoomContentIdSchema,
+      },
+      { additionalProperties: false },
+    ),
+    artifact: Type.Object(
+      {
+        id: LoomPortableIdSchema,
+        reference: LoomProjectFileReferenceSchema,
+        digest: LoomDigestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    hypothesis: Type.Object(
+      {
+        ref: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+        statement: Type.String({ minLength: 1, maxLength: 4_096 }),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false, $id: "LoomVeilVerificationStartedPayload" },
+);
+
+export type LoomVeilVerificationStartedPayload = Static<
+  typeof LoomVeilVerificationStartedPayloadSchema
+>;
+
+export function isLoomVeilVerificationStartedPayload(
+  input: unknown,
+): input is LoomVeilVerificationStartedPayload {
+  return (
+    Check(LoomVeilVerificationStartedPayloadSchema, input) &&
+    input.source.viewId.startsWith("view_") &&
+    isLoomProjectFileReference(input.artifact.reference) &&
+    input.hypothesis.statement.trim() === input.hypothesis.statement
+  );
+}
+
+export const LoomVeilStageChangedPayloadSchema = Type.Object(
+  {
+    format: Type.Literal("loom.veil-stage-changed.v0"),
+    attemptId: LoomPortableIdSchema,
+    taskId: LoomPortableIdSchema,
+    stage: Type.Union([Type.Literal("development-data"), Type.Literal("independent-verification")]),
+    status: Type.Union([Type.Literal("running"), Type.Literal("completed")]),
+  },
+  { additionalProperties: false, $id: "LoomVeilStageChangedPayload" },
+);
+
+export type LoomVeilStageChangedPayload = Static<typeof LoomVeilStageChangedPayloadSchema>;
+
+export function isLoomVeilStageChangedPayload(
+  input: unknown,
+): input is LoomVeilStageChangedPayload {
+  return (
+    Check(LoomVeilStageChangedPayloadSchema, input) &&
+    (input.stage !== "development-data" || input.status === "completed")
+  );
+}
+
+export const LoomVeilExperimentRecordedPayloadSchema = Type.Object(
+  {
+    format: Type.Literal("loom.veil-experiment-recorded.v0"),
+    attemptId: LoomPortableIdSchema,
+    taskId: LoomPortableIdSchema,
+    experimentId: LoomDigestSchema,
+    archiveHash: LoomDigestSchema,
+    researchRunId: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+    verdict: Type.Union([
+      Type.Literal("accepted"),
+      Type.Literal("degraded"),
+      Type.Literal("rejected"),
+    ]),
+    claimStatus: Type.Union([
+      Type.Literal("verified"),
+      Type.Literal("degraded"),
+      Type.Literal("rejected"),
+    ]),
+    registrationStatus: Type.Union([Type.Literal("preregistered"), Type.Literal("exploratory")]),
+    artifactHash: LoomDigestSchema,
+    planHash: LoomDigestSchema,
+    contractHash: LoomDigestSchema,
+    candidateHash: LoomDigestSchema,
+    executionCount: Type.Integer({ minimum: 1 }),
+    assurance: LoomAssuranceSchema,
+  },
+  { additionalProperties: false, $id: "LoomVeilExperimentRecordedPayload" },
+);
+
+export type LoomVeilExperimentRecordedPayload = Static<
+  typeof LoomVeilExperimentRecordedPayloadSchema
+>;
+
+export function isLoomVeilExperimentRecordedPayload(
+  input: unknown,
+): input is LoomVeilExperimentRecordedPayload {
+  if (!Check(LoomVeilExperimentRecordedPayloadSchema, input) || !isLoomAssurance(input.assurance)) {
+    return false;
+  }
+  const expectedClaimStatus =
+    input.verdict === "accepted"
+      ? "verified"
+      : input.verdict === "degraded"
+        ? "degraded"
+        : "rejected";
+  return (
+    input.claimStatus === expectedClaimStatus &&
+    input.assurance.state === input.verdict &&
+    sameStrings(input.assurance.evidenceRefs, [input.experimentId, input.archiveHash])
+  );
 }
 
 export const LoomEventTypeSchema = Type.Union(
@@ -972,6 +1173,7 @@ export const LoomErrorCodeSchema = Type.Union(
     Type.Literal("SESSION_CONFLICT"),
     Type.Literal("TASK_NOT_FOUND"),
     Type.Literal("TASK_NOT_CANCELLABLE"),
+    Type.Literal("PROMOTION_NOT_AVAILABLE"),
     Type.Literal("RUNTIME_UNAVAILABLE"),
     Type.Literal("VIEW_NOT_FOUND"),
     Type.Literal("BLOB_NOT_FOUND"),

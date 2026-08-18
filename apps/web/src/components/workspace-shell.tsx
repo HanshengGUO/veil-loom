@@ -3,6 +3,7 @@
 import {
   LOOM_PROFILE_DESCRIPTORS,
   type LoomCapability,
+  type LoomPromotionAcceptedResponse,
   type LoomSelection,
   type LoomSessionProfile,
   RAW_PI_PROFILE,
@@ -15,7 +16,12 @@ import {
   useSessionEventStream,
 } from "../hooks/use-session-event-stream";
 import { resolveDaemonOrigin } from "../lib/daemon-auth";
-import type { ConversationEntry, TaskProjection } from "../lib/session-projection";
+import { cancelVeilPromotion, createVeilPromotion } from "../lib/promotion-client";
+import type {
+  ConversationEntry,
+  SessionProjection,
+  TaskProjection,
+} from "../lib/session-projection";
 import { BacktestCanvas } from "./backtest-canvas";
 
 const DEMO_PROJECT_ID = "daily-factor-demo";
@@ -38,6 +44,14 @@ const CAPABILITY_LABELS: Readonly<Record<LoomCapability, string>> = {
 
 export function WorkspaceShell() {
   const [profileId, setProfileId] = useState<LoomSessionProfile>("raw-pi");
+  const [artifactReference, setArtifactReference] = useState("artifact/daily-factor.mjs");
+  const [hypothesisStatement, setHypothesisStatement] = useState(
+    "The strongest cross-sectional price trend remains positive out of sample after costs.",
+  );
+  const [promotionReceipt, setPromotionReceipt] = useState<LoomPromotionAcceptedResponse>();
+  const [promotionPending, setPromotionPending] = useState(false);
+  const [promotionError, setPromotionError] = useState<string>();
+  const [cancelPending, setCancelPending] = useState(false);
   const projectReadiness = useProjectReadiness({
     enabled: DEMO_STREAM_ENABLED,
     daemonOrigin: DAEMON_ORIGIN,
@@ -48,6 +62,12 @@ export function WorkspaceShell() {
     daemonOrigin: DAEMON_ORIGIN,
     projectId: DEMO_PROJECT_ID,
     sessionId: DEMO_SESSION_ID,
+  });
+  const promotionStream = useSessionEventStream({
+    enabled: DEMO_STREAM_ENABLED && promotionReceipt !== undefined,
+    daemonOrigin: DAEMON_ORIGIN,
+    projectId: DEMO_PROJECT_ID,
+    sessionId: promotionReceipt?.sessionId ?? "promotion-pending",
   });
   const backtestView = useBacktestView({
     enabled: DEMO_STREAM_ENABLED,
@@ -67,6 +87,60 @@ export function WorkspaceShell() {
   );
   const latestTask = projection.tasks.at(-1);
   const activeTab = projection.activeView?.kind === "backtest" ? "Backtest" : "Explore";
+  const canPromote =
+    DEMO_STREAM_ENABLED &&
+    sessionProfileId === "raw-pi" &&
+    projection.activeView !== undefined &&
+    projection.status === "ready" &&
+    veilReady &&
+    artifactReference.trim().length > 0 &&
+    hypothesisStatement.trim().length > 0 &&
+    promotionReceipt === undefined &&
+    !promotionPending;
+
+  async function startPromotion() {
+    const view = projection.activeView;
+    if (view === undefined || !canPromote) return;
+    setPromotionPending(true);
+    setPromotionError(undefined);
+    try {
+      const receipt = await createVeilPromotion({
+        daemonOrigin: DAEMON_ORIGIN,
+        projectId: DEMO_PROJECT_ID,
+        sourceSessionId: DEMO_SESSION_ID,
+        viewId: view.viewId,
+        artifactReference: artifactReference.trim(),
+        hypothesisStatement: hypothesisStatement.trim(),
+      });
+      setPromotionReceipt(receipt);
+    } catch (error) {
+      setPromotionError(
+        error instanceof Error ? error.message : "The verification attempt could not start.",
+      );
+    } finally {
+      setPromotionPending(false);
+    }
+  }
+
+  async function cancelPromotion() {
+    if (promotionReceipt === undefined || cancelPending) return;
+    setCancelPending(true);
+    setPromotionError(undefined);
+    try {
+      await cancelVeilPromotion({
+        daemonOrigin: DAEMON_ORIGIN,
+        projectId: DEMO_PROJECT_ID,
+        sessionId: promotionReceipt.sessionId,
+        taskId: promotionReceipt.taskId,
+      });
+    } catch (error) {
+      setPromotionError(
+        error instanceof Error ? error.message : "The verification task could not be cancelled.",
+      );
+    } finally {
+      setCancelPending(false);
+    }
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-[1680px] flex-col px-4 py-4 sm:px-6 lg:px-8">
@@ -253,7 +327,197 @@ export function WorkspaceShell() {
           </div>
         </div>
       </section>
+
+      <PromotionPanel
+        artifactReference={artifactReference}
+        canPromote={canPromote}
+        cancelPending={cancelPending}
+        connection={promotionStream.connection}
+        error={promotionError}
+        hypothesisStatement={hypothesisStatement}
+        onArtifactReference={setArtifactReference}
+        onCancel={() => void cancelPromotion()}
+        onHypothesisStatement={setHypothesisStatement}
+        onReset={() => {
+          setPromotionReceipt(undefined);
+          setPromotionError(undefined);
+        }}
+        onStart={() => void startPromotion()}
+        pending={promotionPending}
+        projection={promotionStream.projection}
+        receipt={promotionReceipt}
+      />
     </main>
+  );
+}
+
+function PromotionPanel({
+  artifactReference,
+  canPromote,
+  cancelPending,
+  connection,
+  error,
+  hypothesisStatement,
+  onArtifactReference,
+  onCancel,
+  onHypothesisStatement,
+  onReset,
+  onStart,
+  pending,
+  projection,
+  receipt,
+}: Readonly<{
+  artifactReference: string;
+  canPromote: boolean;
+  cancelPending: boolean;
+  connection: BrowserConnectionState;
+  error: string | undefined;
+  hypothesisStatement: string;
+  onArtifactReference: (value: string) => void;
+  onCancel: () => void;
+  onHypothesisStatement: (value: string) => void;
+  onReset: () => void;
+  onStart: () => void;
+  pending: boolean;
+  projection: SessionProjection;
+  receipt: LoomPromotionAcceptedResponse | undefined;
+}>) {
+  const task =
+    receipt === undefined
+      ? undefined
+      : projection.tasks.find((candidate) => candidate.id === receipt.taskId);
+  const terminal =
+    task !== undefined && ["cancelled", "completed", "failed", "interrupted"].includes(task.status);
+  const experiment = projection.veilAttempt?.experiment;
+  const canCancel = task?.status === "running" && !cancelPending;
+
+  return (
+    <section className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/90 p-5">
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent)]">
+            Promote with Veil
+          </p>
+          <h2 className="mt-1 text-base font-semibold">Start a new verification attempt</h2>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--muted)]">
+            Loom carries only the hypothesis and selected artifact identity. Veil rereads registered
+            data and re-executes independently; Raw metrics are never a target or gate input.
+          </p>
+        </div>
+        <span className="rounded-full border border-lime-200/15 bg-[var(--accent-soft)] px-3 py-1.5 text-[10px] font-semibold text-[var(--accent)]">
+          DERIVED FROM EXPLORATION
+        </span>
+      </div>
+
+      {receipt === undefined ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(220px,0.7fr)_minmax(320px,1.3fr)_auto] lg:items-end">
+          <label className="grid gap-1.5 text-xs text-slate-300">
+            Project-relative artifact
+            <input
+              autoComplete="off"
+              className="rounded-lg border border-[var(--border)] bg-black/20 px-3 py-2.5 font-mono text-xs text-slate-200 outline-none focus:border-lime-200/40"
+              disabled={pending}
+              maxLength={256}
+              onChange={(event) => onArtifactReference(event.target.value)}
+              spellCheck={false}
+              value={artifactReference}
+            />
+          </label>
+          <label className="grid gap-1.5 text-xs text-slate-300">
+            Hypothesis
+            <input
+              autoComplete="off"
+              className="rounded-lg border border-[var(--border)] bg-black/20 px-3 py-2.5 text-xs text-slate-200 outline-none focus:border-lime-200/40"
+              disabled={pending}
+              maxLength={4096}
+              onChange={(event) => onHypothesisStatement(event.target.value)}
+              value={hypothesisStatement}
+            />
+          </label>
+          <button
+            className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-xs font-semibold text-[#17200e] disabled:cursor-not-allowed disabled:opacity-45"
+            disabled={!canPromote}
+            onClick={onStart}
+            type="button"
+          >
+            {pending ? "Starting…" : "Promote with Veil"}
+          </button>
+        </div>
+      ) : (
+        <div className="mt-4 rounded-xl border border-[var(--border)] bg-black/20 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-200">
+                Raw session → independent Veil attempt
+              </p>
+              <p className="mt-1 font-mono text-[10px] text-slate-500">
+                {receipt.attemptId} · {projection.veilAttempt?.stage?.stage ?? "starting"}
+              </p>
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                {streamDescription(connection, projection.issue?.message)}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {canCancel ? (
+                <button
+                  className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-slate-300 disabled:opacity-50"
+                  disabled={cancelPending}
+                  onClick={onCancel}
+                  type="button"
+                >
+                  {cancelPending ? "Cancelling…" : "Cancel"}
+                </button>
+              ) : null}
+              {terminal ? (
+                <button
+                  className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-slate-300"
+                  onClick={onReset}
+                  type="button"
+                >
+                  New attempt
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {experiment === undefined ? (
+            <p className="mt-3 text-xs font-semibold text-[var(--warning)]">
+              {task?.status === "failed"
+                ? "EXECUTION FAILED · NO REJECTED EXPERIMENT WAS INFERRED"
+                : task?.status === "cancelled" || task?.status === "interrupted"
+                  ? `${task.status.toUpperCase()} · NO EXPERIMENT CLAIM`
+                  : "VERIFYING · SOURCE RESULT REMAINS EXPLORATORY"}
+            </p>
+          ) : (
+            <div className="mt-3 border-t border-[var(--border)] pt-3">
+              <p
+                className={`text-xs font-semibold tracking-wide ${
+                  experiment.verdict === "accepted"
+                    ? "text-[var(--accent)]"
+                    : experiment.verdict === "degraded"
+                      ? "text-[var(--warning)]"
+                      : "text-red-300"
+                }`}
+              >
+                VEIL EXPERIMENT · {experiment.verdict.toUpperCase()}
+              </p>
+              <p className="mt-1 font-mono text-[10px] text-slate-500">
+                {experiment.experimentId} · {experiment.executionCount} isolated executions
+              </p>
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                This assurance belongs to the new attempt only. The source chart remains
+                exploratory.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+      {error === undefined ? null : (
+        <p className="mt-3 text-xs text-red-300" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -265,7 +529,7 @@ function VeilReadiness({ state }: Readonly<{ state: ProjectReadinessState }>) {
       <p className="mt-2 text-xs text-[var(--accent)]">
         Veil {state.readiness.runtime.installedVersion} ready · {project.datasetCount}{" "}
         {project.datasetCount === 1 ? "dataset" : "datasets"} · {project.runtimeCount}{" "}
-        {project.runtimeCount === 1 ? "runtime" : "runtimes"}. Verification actions come next.
+        {project.runtimeCount === 1 ? "runtime" : "runtimes"}. Ready for a new verification attempt.
       </p>
     );
   }

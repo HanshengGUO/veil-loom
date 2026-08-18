@@ -222,7 +222,7 @@
     "dataId": "daily-factor-market-v0",
     "dataDigest": "sha256:bd71d76f73d2f6d0ec62059acab4c60b4101b60d0b9da2dc7fa2a00ec946b8b3",
     "artifactId": "daily-factor-v0",
-    "artifactDigest": "sha256:54b423a2cb295039739026d5515a22839c7d241b61cb9eae7c9ea67da31de9cd"
+    "artifactDigest": "sha256:b990daf38ee553988d6299e636e3363bb0204298f1b0d508a94be3d904bea5ed"
   },
   "run": {
     "protocolId": "next-session-open-v0",

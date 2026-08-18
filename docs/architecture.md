@@ -34,8 +34,8 @@ clients bootstrap again before resuming from their durable cursor.
 ## Profiles
 
 Raw Pi and Veil are profiles over one Pi host rather than unrelated backends. A session freezes its
-profile when it starts. The planned Raw Pi to Veil transition creates a new verification attempt
-because Veil must register chronology and independently re-execute the artifact.
+profile when it starts. A Raw Pi to Veil transition creates a new verification attempt because Veil
+must register chronology and independently re-execute the artifact.
 
 The daemon registers project roots at startup; the browser supplies only a portable project ID. Raw
 Pi receives the canonical registered root. Before a Veil session starts, the daemon also loads the
@@ -46,9 +46,9 @@ session event is written.
 `veil-quant` currently publishes TypeScript source, so the daemon uses its declared `tsx` runtime to
 load that public entry point. Loom pins the tested `>=0.1.0 <0.2.0` range, checks the expected tool
 and project formats, and does not import Veil engine internals. The loaded extension adds Veil's
-data, backtest, and memory tools to a Veil Pi session. In this slice Loom still publishes only
-exploratory reference views; promotion commands and evidence projection are the next integration
-boundary.
+data, backtest, and memory tools to a Veil Pi session. Ordinary Pi views remain exploratory. Only a
+separate promotion task may project a non-exploratory state, and only after Loom reloads and verifies
+the Experiment archive through Veil's public API.
 
 ### Project readiness
 
@@ -70,6 +70,33 @@ Next.js request handlers and Server Actions do not own research tasks. The daemo
 persists task state, and reports progress or a terminal result through the event stream. Browser
 disconnects do not cancel tasks.
 
+## Verification attempts
+
+The v0 promotion boundary is deliberately narrow. The browser submits an owned Raw view ID, one
+normalized project-relative artifact reference, and a bounded hypothesis. It cannot submit Raw
+metrics, an expected result, a data path, a promotion request file, gate settings, or an assurance
+label.
+
+Before creating anything, the daemon checks that the source session is Raw Pi, the view was durably
+published by a completed task, the explicit daily-factor adapter owns it, the project is Veil-ready,
+and the selected file hashes to the view's artifact digest. It then creates a new Veil session. The
+old event log is not amended.
+
+The target Pi session's private append-only branch is the Veil ledger. Loom records the hypothesis,
+rereads the registered panel through `veil-data`, and writes a daemon-owned promotion request that
+contains the new read-set ID and fixed adapter recipe. Veil performs artifact capture, walk-forward
+execution, pricing, costs, statistical gates, and Experiment persistence. Loom calls
+`loadProjectExperiment()` on the resulting identity and checks every projected hash again before it
+appends `veil.experiment_recorded`.
+
+The public stream stays coarse because Veil's current public backtest call is atomic. It reports a
+completed development-data read, independent verification running/completed, and the final
+Experiment identity. The panel read is exploration-grade chronology context, not verification
+evidence; the independent run performs the point-in-time guarded reads. Loom does not invent
+per-fold or per-gate progress. `ok: false`, an exception, cancellation, or a daemon restart yields a
+failed, cancelled, or interrupted task with no rejected Experiment inference. Accepted, degraded,
+and rejected are reserved for an actual verified archive.
+
 ## Pi host
 
 The daemon embeds Pi through its public programmatic `AgentSession` API. A runtime adapter owns each
@@ -80,10 +107,10 @@ provider/model fingerprint without recording credentials.
 
 The current slice enables only a deterministic offline provider, one reference-backtest Loom tool,
 and the version-pinned Veil extension for ready projects. The scripted response invokes only the
-committed reference adapter; it does not trigger a promotion. The Loom reference tool has no shell,
-filesystem, or network authority. Veil tools retain the local authority documented by Veil. Real
-provider configuration and local coding tools remain opt-in work; they will stay in the daemon
-rather than moving into the browser.
+committed reference adapter; promotion is a separate explicit browser action. The Loom reference
+tool has no shell, filesystem, or network authority. Veil tools retain the local authority
+documented by Veil. Real provider configuration and local coding tools remain opt-in work; they will
+stay in the daemon rather than moving into the browser.
 
 ## Research views
 
@@ -167,8 +194,10 @@ State lives in the normal per-user application-state directory:
 provider, then imports the committed daily-factor reference output. The resulting event projection
 and content-addressed view are durable, are validated on restart, and refuse conflicting identities.
 The demo root includes a valid Veil project declaration, so the Web app also renders a path-free
-readiness summary. `npm run dev:web` authenticates directly to the loopback daemon and renders the
-real fixture series. Production builds do not enable the demo stream.
+readiness summary. The explicit promotion action uses a committed Veil-compatible momentum artifact
+and a 35-session, four-entity point-in-time panel; it never treats the Raw chart metrics as a target.
+`npm run dev:web` authenticates directly to the loopback daemon and renders the real fixture series.
+Production builds do not enable the demo stream.
 
 ## Dependency direction
 

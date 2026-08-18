@@ -58,6 +58,26 @@ presence is not a sandbox. Loom checks a pinned minor range and public API shape
 An incompatible runtime or invalid project keeps the Veil profile unavailable while Raw Pi remains
 usable. Capability readiness never grants verified assurance.
 
+Promotion does not turn the browser into a filesystem or evidence authority. Its request accepts
+only an owned view ID, one normalized project-relative artifact reference, and a bounded hypothesis.
+The daemon resolves the file beneath the registered canonical root, follows it only if the final
+canonical path remains inside that root, enforces a 1 MiB limit, and hashes the bytes against the
+source view before it creates a target session. The browser cannot choose the dataset, Veil request
+file, protocol, cost model, gates, expected result, or assurance. The selected file itself must be a
+regular file rather than a symlink.
+
+Generated promotion requests live under the already validated project `.veil` directory and use an
+exclusive, daemon-generated attempt filename. They contain a new Veil read-set ID and the
+daemon-owned adapter recipe, never Raw chart metrics. The selected artifact is hashed again before
+the request is written. Veil executes it in its framed child artifact runtime; Loom receives only the
+public tool result and does not echo child paths or stderr. Process framing is not an OS sandbox.
+
+The source Raw log is not modified. A separate Veil session owns the private hypothesis/data/run
+ledger and public task events. Loom accepts non-exploratory assurance only after Veil's public
+archive loader verifies the Experiment and its hashes match the tool result. A child failure,
+malformed archive, cancellation, or interrupted task exposes no rejected or accepted state. Public
+events contain portable artifact and evidence identities, not project roots or archive paths.
+
 Pi's event stream is an internal input, not a public passthrough. Loom publishes visible assistant
 text and coarse lifecycle facts, but drops thinking blocks, tool arguments, tool result bodies, and
 provider error messages. The committed CI/development provider is Pi's in-memory faux provider with
@@ -89,5 +109,6 @@ out-of-range, mixed-unit, unavailable-series, and cross-session selections fail 
 
 The initial release does not defend against a deliberately malicious local user, dependency, or
 project configuration, and it does not provide an operating-system sandbox. Pi tools, Veil tools,
-and user backtests run with the user's permissions. Remote daemon binding and multi-user access are
-not supported.
+and user backtests run with the user's permissions. A project-relative artifact selection is not an
+OS sandbox or a review of the code's intent. Remote daemon binding and multi-user access are not
+supported.

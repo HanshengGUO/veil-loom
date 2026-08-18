@@ -40,3 +40,13 @@ are tracked independently from package versions.
   views exploratory until independent evidence is projected.
 - A Web readiness client that fails closed on forged ownership, malformed data, and oversized
   responses and enables the Veil profile only for ready projects.
+- An exact `loom.promotion.create.v0` handoff that accepts only an owned view, project-relative
+  artifact, and hypothesis, with no Raw metric or expected-result fields.
+- Separate Veil verification sessions with private hypothesis/data/run chronology, guarded data
+  reads, cancellable independent re-execution, and restart-safe task semantics.
+- Archive-validated `veil.verification_started`, coarse stage, and `veil.experiment_recorded`
+  projections that keep execution failure distinct from a rejected Experiment.
+- A committed Veil-compatible two-session momentum artifact and 35-session, four-entity panel for
+  the end-to-end promotion fixture.
+- A Web **Promote with Veil** action that preserves the Raw view's exploratory label while showing
+  the new attempt's real task and Experiment outcome.

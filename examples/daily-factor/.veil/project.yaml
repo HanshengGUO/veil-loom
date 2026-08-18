@@ -17,6 +17,6 @@ stage4:
   null_generators:
     - kind: centered-block-bootstrap
       reference: daily-factor-centered-blocks
-      replications: 64
-      block_length: 3
+      replications: 128
+      block_length: 5
       seed: 20260818

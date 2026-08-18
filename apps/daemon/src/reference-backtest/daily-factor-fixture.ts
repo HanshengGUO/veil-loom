@@ -162,7 +162,7 @@ export const DAILY_FACTOR_IMPORT: LoomBacktestImport = {
     dataId: "daily-factor-market-v0",
     dataDigest: "sha256:bd71d76f73d2f6d0ec62059acab4c60b4101b60d0b9da2dc7fa2a00ec946b8b3",
     artifactId: "daily-factor-v0",
-    artifactDigest: "sha256:54b423a2cb295039739026d5515a22839c7d241b61cb9eae7c9ea67da31de9cd",
+    artifactDigest: "sha256:b990daf38ee553988d6299e636e3363bb0204298f1b0d508a94be3d904bea5ed",
   },
   run: {
     protocolId: "next-session-open-v0",
@@ -175,7 +175,7 @@ export const DAILY_FACTOR_IMPORT: LoomBacktestImport = {
 
 /** Golden identities for the committed demo project/session/task context. */
 export const DAILY_FACTOR_EXPECTED_IDENTITIES = {
-  view: "view_74836c889d6cddf9bef2578ae4b86797662fef1f4bc4f203898b745ed2e27088",
+  view: "view_77ff60190d8f20b3c5732d295c319dac6915f326ffb01653de963c6502c2c1d1",
   market: "blob_e8cb20ea645d2c6e1d9333f7262823c277d6513156c5b44c51a7ceb7b35326aa",
   equity: "blob_0370f6f805a2660eafc8a33ce03653bd1514d3189390596e915608b019219d7f",
   drawdown: "blob_b33a2b5eaf6f219ef8921dbef83364ca58cacb42084cf8d07b8288000651d358",

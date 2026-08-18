@@ -39,7 +39,7 @@ describe("daily-factor reference backtest adapter", () => {
       `sha256:${await fixtureDigest("market.csv")}`,
     );
     expect(DAILY_FACTOR_IMPORT.source.artifactDigest).toBe(
-      `sha256:${await fixtureDigest("factor.ts")}`,
+      `sha256:${await fixtureDigest("artifact/daily-factor.mjs")}`,
     );
   });
 

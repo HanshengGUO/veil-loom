@@ -7,6 +7,7 @@ The initial contract defines:
 
 - session profiles and capabilities;
 - Veil runtime and project readiness;
+- minimal Raw-to-Veil promotion commands and exact verification records;
 - assurance states and their allowed issuer;
 - daemon health and profile discovery responses;
 - ordered session events, replay responses, and redacted errors.
@@ -86,6 +87,57 @@ reordered capabilities, and contradictory status fields fail protocol validation
 Readiness says only that the Veil profile can load. It does not create a verification attempt,
 Experiment, evidence reference, or non-exploratory assurance. Creating a Veil session while the
 project is not ready returns `PROJECT_NOT_READY` without creating a durable session.
+
+## Veil verification attempts
+
+Promotion starts from a Raw Pi session:
+
+```text
+POST /v0/sessions/:sourceSessionId/promotions?projectId=:projectId
+```
+
+The exact request is intentionally smaller than a Veil promotion request:
+
+```json
+{
+  "format": "loom.promotion.create.v0",
+  "viewId": "view_<sha256>",
+  "artifactReference": "artifact/daily-factor.mjs",
+  "hypothesis": {
+    "statement": "The factor remains positive out of sample after costs."
+  }
+}
+```
+
+`artifactReference` is a normalized, portable path beneath the daemon-owned project root. Absolute
+paths, backslashes, empty or dot segments, control characters, and unknown fields fail closed. The
+schema has no fields for Raw metrics, expected values, data locators, protocol settings, gates, or
+assurance.
+
+After the source view, task topology, adapter identity, and artifact digest are checked, the daemon
+returns `loom.promotion.accepted.v0`. Its `sourceSessionId` identifies the unchanged Raw session;
+`sessionId` identifies a newly created Veil session and must differ. It also carries the new task and
+attempt IDs.
+
+The target stream uses three exact payloads:
+
+- `loom.veil-verification-started.v0` records `derived-from-exploration`, the source view/session,
+  selected artifact identity, and Veil hypothesis reference;
+- `loom.veil-stage-changed.v0` reports only the completed development-data read and
+  running/completed independent verification. The panel read establishes an observed development
+  read-set; it remains exploration-grade and is not verification evidence by itself;
+- `loom.veil-experiment-recorded.v0` records the Experiment/archive identity, structural hashes,
+  execution count, registration status, verdict, claim status, and exact Veil assurance.
+
+The final payload is valid only when `accepted → verified`, `degraded → degraded`, or
+`rejected → rejected`, and its assurance evidence is exactly the Experiment ID plus verified archive
+hash. Events must arrive in attempt/stage order and match the target task. The browser reducer stops
+on malformed, reordered, cross-attempt, or forged evidence.
+
+An `ok: false` Veil result or execution exception ends in `task.failed`; it does not produce
+`veil.experiment_recorded` and must not be rendered as rejected. Cancellation ends in
+`task.cancelled`. A restart with no task terminal follows the normal `task.interrupted` rule and is
+never resumed or guessed successful.
 
 ## Session events
 
@@ -210,13 +262,15 @@ Mutations use exact, versioned JSON bodies and return `202 Accepted` with a gene
 POST /v0/projects/:projectId/sessions
 POST /v0/sessions/:sessionId/messages?projectId=:projectId
 POST /v0/sessions/:sessionId/selections?projectId=:projectId
+POST /v0/sessions/:sessionId/promotions?projectId=:projectId
 POST /v0/sessions/:sessionId/tasks/:taskId/cancel?projectId=:projectId
 ```
 
 The corresponding body formats are `loom.session.create.v0`, `loom.message.send.v0`,
-`loom.selection.create.v0`, and `loom.task.cancel.v0`. Unknown fields, blank messages, oversized
-bodies, non-portable IDs, and unavailable profiles fail closed. A successful response uses
-`loom.command.accepted.v0`; message and cancellation responses carry a task ID, while selection
+`loom.selection.create.v0`, `loom.promotion.create.v0`, and `loom.task.cancel.v0`. Unknown fields,
+blank messages, oversized bodies, non-portable IDs, and unavailable profiles fail closed. Ordinary
+commands use `loom.command.accepted.v0`; promotion uses `loom.promotion.accepted.v0` so the source and
+new target session are explicit. Message and cancellation responses carry a task ID, while selection
 creation carries a selection ID. Completion never depends on the HTTP connection: it is reported by
 the ordered event stream.
 
@@ -228,5 +282,7 @@ fingerprint so a replay remains attributable.
 ## Assurance
 
 Loom may issue only `exploratory` assurance. Contract and Experiment states must be independently
-derived from validated Veil records. The browser never infers assurance from a metric, process exit
-code, model message, visual similarity, loaded Veil extension, or `ready` project response.
+derived from validated Veil records. For the v0 complete promotion recipe, Loom publishes a final
+state only after Veil reloads and verifies the immutable Experiment archive. The browser never
+infers assurance from a metric, process exit code, model message, visual similarity, loaded Veil
+extension, or `ready` project response.
