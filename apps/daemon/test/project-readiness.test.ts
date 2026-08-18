@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { parse, resolve } from "node:path";
 import { isLoomProjectReadinessResponse, VEIL_PROFILE } from "@veilquant/loom-protocol";
@@ -130,10 +130,11 @@ describe("Veil project readiness", () => {
     const projectRoot = resolve(temporary, "project-alias");
     await mkdir(canonicalRoot);
     await symlink(canonicalRoot, projectRoot, process.platform === "win32" ? "junction" : "dir");
+    const resolvedProjectRoot = await realpath(projectRoot);
     const veil = fakeVeilApi(
       projectRoot,
       undefined,
-      `Invalid declarations at ${projectRoot}/.veil/project.yaml and ${canonicalRoot}/.veil/project.yaml`,
+      `Invalid declarations at ${projectRoot}/.veil/project.yaml and ${resolvedProjectRoot}/.veil/project.yaml`,
     );
     const registry = new LoomProjectRegistry({
       registrations: [{ projectId: "diagnostic-project", root: projectRoot }],
@@ -150,7 +151,7 @@ describe("Veil project readiness", () => {
       },
     });
     expect(JSON.stringify(readiness)).not.toContain(projectRoot);
-    expect(JSON.stringify(readiness)).not.toContain(canonicalRoot);
+    expect(JSON.stringify(readiness)).not.toContain(resolvedProjectRoot);
     expect(readiness.issue?.remedy.length).toBe(1_024);
 
     const wrongOwner = fakeVeilApi(projectRoot, {
