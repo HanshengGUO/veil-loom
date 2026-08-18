@@ -10,7 +10,8 @@ reproduction.
 
 > Status: pre-alpha with restart-resilient Raw Pi and Veil sessions, synchronized backtest charts,
 > bounded chart selections, project-level Veil readiness, and independent Raw-to-Veil verification
-> attempts. The model path remains fully offline, and Loom itself is not published to npm.
+> attempts with reviewable evidence and exact reproduction. The model path remains fully offline,
+> and Loom itself is not published to npm.
 
 ## Session profiles
 
@@ -25,9 +26,8 @@ view stays exploratory regardless of the new attempt's outcome.
 
 The daemon currently pins `veil-quant` to the tested `0.1.x` line, loads its public project API, and
 reports whether the current project is ready. A ready profile means the Veil tools can be loaded; it
-does not mean that any result has been verified. Loom projects the new attempt's coarse lifecycle
-and archive-validated Experiment identity. The full evidence viewer and reproduction action are the
-next slice.
+does not mean that any result has been verified. Loom projects the new attempt's coarse lifecycle,
+archive-validated Experiment identity, bounded evidence summary, and exact reproduction result.
 
 ## Architecture
 
@@ -109,6 +109,14 @@ contact a model service. The Raw view remains **EXPLORATORY · UNVERIFIED**. Any
 or rejected assurance belongs only to the independently executed Veil attempt; an execution failure
 produces no Experiment label at all.
 
+Completed Experiments appear in a bounded project index, so refreshing the Web app can reopen the
+latest attempt without replaying a model conversation. The evidence drawer shows the verified
+dataset and method identities, OOS metrics, cost model, gate outcomes, limitations, and content
+hashes. It never sends artifact code, raw pricing payloads, snapshot contents, or local paths to the
+browser. **Reproduce Experiment** reruns the archived artifact, pricing, and gates from immutable
+snapshots. A matched reproduction confirms identity parity; it does not change the original
+accepted, degraded, or rejected verdict.
+
 ## Initial milestone
 
 The first vertical slice is taking one deterministic daily-factor example end to end:
@@ -119,7 +127,8 @@ The first vertical slice is taking one deterministic daily-factor example end to
    adapter;
 4. send a selected chart range back to Pi — implemented for the live offline fixture;
 5. create a fresh Veil verification attempt — implemented with a minimal portable handoff;
-6. inspect the Experiment and reproduce it — pending evidence projection.
+6. inspect the Experiment and reproduce it — implemented with bounded evidence and matched-identity
+   replay.
 
 L2/L3 data, automatic framework detection, autonomous cruise mode, and multi-agent pattern scanning
 are deliberately outside this milestone.

@@ -3,6 +3,7 @@ import {
   isLoomPublishedViewDescriptor,
   isLoomSelectionCreatedPayload,
   isLoomVeilExperimentRecordedPayload,
+  isLoomVeilReproductionCompletedPayload,
   isLoomVeilStageChangedPayload,
   isLoomVeilVerificationStartedPayload,
   type LoomEventEnvelope,
@@ -11,6 +12,7 @@ import {
   type LoomSelection,
   type LoomSessionProfile,
   type LoomVeilExperimentRecordedPayload,
+  type LoomVeilReproductionCompletedPayload,
   type LoomVeilStageChangedPayload,
   type LoomVeilVerificationStartedPayload,
 } from "@veilquant/loom-protocol";
@@ -26,6 +28,7 @@ export interface ConversationEntry {
 export interface TaskProjection {
   id: string;
   label: string;
+  kind: string | undefined;
   status: "running" | "cancel-requested" | "cancelled" | "completed" | "failed" | "interrupted";
   sequence: number;
 }
@@ -38,6 +41,7 @@ export interface VeilAttemptProjection {
   verification: LoomVeilVerificationStartedPayload;
   stage: LoomVeilStageChangedPayload | undefined;
   experiment: LoomVeilExperimentRecordedPayload | undefined;
+  reproductions: readonly LoomVeilReproductionCompletedPayload[];
 }
 
 export type SessionStreamIssue =
@@ -309,7 +313,8 @@ export function applySessionEvent(
         next.profile !== "veil" ||
         event.payload.source.sessionId === state.sessionId ||
         next.veilAttempt !== undefined ||
-        !taskHasStatus(next, event.payload.taskId, "running")
+        !taskHasStatus(next, event.payload.taskId, "running") ||
+        taskKind(next, event.payload.taskId) !== "veil-verification"
       ) {
         return rejected(state, {
           kind: "protocol",
@@ -322,8 +327,41 @@ export function applySessionEvent(
           verification: event.payload,
           stage: undefined,
           experiment: undefined,
+          reproductions: [],
         },
         lastActivity: "Veil verification started",
+      };
+      break;
+    }
+    case "veil.reproduction_completed": {
+      if (!isLoomVeilReproductionCompletedPayload(event.payload)) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The stream returned invalid Veil reproduction evidence.",
+        });
+      }
+      const attempt = next.veilAttempt;
+      if (
+        attempt?.experiment === undefined ||
+        event.payload.attemptId !== attempt.verification.attemptId ||
+        event.payload.experimentId !== attempt.experiment.experimentId ||
+        !taskHasStatus(next, attempt.verification.taskId, "completed") ||
+        taskKind(next, event.payload.taskId) !== "veil-reproduction" ||
+        !taskHasStatus(next, event.payload.taskId, "running") ||
+        attempt.reproductions.some((item) => item.taskId === event.payload.taskId)
+      ) {
+        return rejected(state, {
+          kind: "protocol",
+          message: "The Veil reproduction does not belong to the active Experiment.",
+        });
+      }
+      next = {
+        ...next,
+        veilAttempt: {
+          ...attempt,
+          reproductions: [...attempt.reproductions, event.payload],
+        },
+        lastActivity: "Experiment reproduction matched",
       };
       break;
     }
@@ -438,6 +476,7 @@ function updateTask(
   const task: TaskProjection = {
     id: taskId,
     label: stringField(event.payload.label) ?? existing?.label ?? "Research task",
+    kind: stringField(event.payload.kind) ?? existing?.kind,
     status,
     sequence: event.sequence,
   };
@@ -504,6 +543,10 @@ function taskHasStatus(
   return task !== undefined && statuses.includes(task.status);
 }
 
+function taskKind(state: SessionProjection, taskId: string): string | undefined {
+  return state.tasks.find((candidate) => candidate.id === taskId)?.kind;
+}
+
 function invalidVeilTerminal(
   state: SessionProjection,
   event: LoomEventEnvelope,
@@ -511,11 +554,13 @@ function invalidVeilTerminal(
 ): boolean {
   const taskId = stringField(event.payload.taskId);
   const attempt = state.veilAttempt;
-  return (
-    taskId !== undefined &&
-    attempt?.verification.taskId === taskId &&
-    (expectsExperiment ? attempt.experiment === undefined : attempt.experiment !== undefined)
-  );
+  if (taskId === undefined || attempt === undefined) return false;
+  if (attempt.verification.taskId === taskId) {
+    return expectsExperiment ? attempt.experiment === undefined : attempt.experiment !== undefined;
+  }
+  if (taskKind(state, taskId) !== "veil-reproduction") return false;
+  const hasReproduction = attempt.reproductions.some((item) => item.taskId === taskId);
+  return expectsExperiment ? !hasReproduction : hasReproduction;
 }
 
 function eventSignature(event: LoomEventEnvelope): string {

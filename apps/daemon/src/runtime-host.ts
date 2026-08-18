@@ -1,15 +1,23 @@
 import { randomUUID } from "node:crypto";
 import {
+  isLoomDigest,
   isLoomPortableId,
   type LoomAcceptedCommandResponse,
   type LoomCreatePromotionRequest,
+  type LoomExperimentEvidenceResponse,
   type LoomProfileDescriptor,
+  type LoomProjectExperimentsResponse,
   type LoomProjectReadinessResponse,
   type LoomPromotionAcceptedResponse,
   type LoomSelection,
   type LoomSessionProfile,
 } from "@veilquant/loom-protocol";
 import type { SessionEventStoreRegistry } from "./event-store.js";
+import {
+  ExperimentAccessError,
+  LoomExperimentCoordinator,
+  type OwnedExperiment,
+} from "./experiments.js";
 import {
   DeterministicPiSessionFactory,
   type DeterministicPiSessionFactoryOptions,
@@ -41,6 +49,7 @@ export interface RuntimeHostOptions {
   projects: LoomProjectRegistry;
   selections?: SelectionService;
   promotions?: LoomPromotionCoordinator;
+  experiments?: LoomExperimentCoordinator;
   idSource?: RuntimeIdSource;
 }
 
@@ -69,6 +78,12 @@ export interface CreateRuntimePromotionInput {
   request: LoomCreatePromotionRequest;
 }
 
+export interface RuntimeExperimentInput {
+  projectId: string;
+  sessionId: string;
+  experimentId: string;
+}
+
 export interface CreateRuntimeIdentity {
   sessionId: string;
   commandId: string;
@@ -85,6 +100,11 @@ export interface PromotionRuntimeIdentity {
   commandId: string;
   taskId: string;
   attemptId: string;
+}
+
+export interface TaskRuntimeIdentity {
+  commandId: string;
+  taskId: string;
 }
 
 export interface RuntimeReconciliationReport {
@@ -104,6 +124,7 @@ export class LoomRuntimeHost {
   readonly #idSource: RuntimeIdSource;
   readonly #selections: SelectionService | undefined;
   readonly #promotions: LoomPromotionCoordinator | undefined;
+  readonly #experiments: LoomExperimentCoordinator | undefined;
 
   constructor(options: RuntimeHostOptions) {
     this.#adapters = new Map(
@@ -117,6 +138,7 @@ export class LoomRuntimeHost {
     this.#idSource = options.idSource ?? defaultIdSource;
     this.#selections = options.selections;
     this.#promotions = options.promotions;
+    this.#experiments = options.experiments;
   }
 
   profileDescriptors(): readonly LoomProfileDescriptor[] {
@@ -126,6 +148,18 @@ export class LoomRuntimeHost {
   projectReadiness(projectId: string): Promise<LoomProjectReadinessResponse> {
     assertRuntimeId(projectId);
     return this.#projects.readiness(projectId);
+  }
+
+  async projectExperiments(projectId: string): Promise<LoomProjectExperimentsResponse> {
+    assertRuntimeId(projectId);
+    if (this.#experiments === undefined) {
+      throw new RuntimeAdapterError("RUNTIME_UNAVAILABLE", "Experiment history is unavailable");
+    }
+    try {
+      return await this.#experiments.list(projectId);
+    } catch (error) {
+      throw experimentRuntimeError(error);
+    }
   }
 
   async reconcileDurableSessions(): Promise<RuntimeReconciliationReport> {
@@ -349,6 +383,63 @@ export class LoomRuntimeHost {
     };
   }
 
+  async experimentEvidence(input: RuntimeExperimentInput): Promise<LoomExperimentEvidenceResponse> {
+    assertRuntimeId(input.projectId);
+    assertRuntimeId(input.sessionId);
+    if (!isLoomDigest(input.experimentId)) {
+      throw new RuntimeAdapterError("EXPERIMENT_NOT_FOUND", "The Experiment identity is invalid");
+    }
+    if (this.#experiments === undefined) {
+      throw new RuntimeAdapterError("RUNTIME_UNAVAILABLE", "Experiment evidence is unavailable");
+    }
+    try {
+      return await this.#experiments.evidence(input);
+    } catch (error) {
+      throw experimentRuntimeError(error);
+    }
+  }
+
+  async reproduceExperiment(
+    input: RuntimeExperimentInput,
+    identity: TaskRuntimeIdentity = { commandId: "", taskId: "" },
+  ): Promise<LoomAcceptedCommandResponse> {
+    assertRuntimeId(input.projectId);
+    assertRuntimeId(input.sessionId);
+    if (!isLoomDigest(input.experimentId)) {
+      throw new RuntimeAdapterError("EXPERIMENT_NOT_FOUND", "The Experiment identity is invalid");
+    }
+    const adapter = this.#requireVeilSession(input.projectId, input.sessionId);
+    if (this.#experiments === undefined) {
+      throw new RuntimeAdapterError(
+        "RUNTIME_UNAVAILABLE",
+        "Experiment reproduction is unavailable",
+      );
+    }
+    let experiment: OwnedExperiment;
+    try {
+      experiment = await this.#experiments.prepareReproduction(input);
+    } catch (error) {
+      throw experimentRuntimeError(error);
+    }
+    const commandId = identity.commandId || this.#nextId("command");
+    const taskId = identity.taskId || this.#nextId("task");
+    for (const id of [commandId, taskId]) assertRuntimeId(id);
+    await adapter.reproduce({
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      commandId,
+      taskId,
+      experiment,
+    });
+    return {
+      format: "loom.command.accepted.v0",
+      commandId,
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      taskId,
+    };
+  }
+
   async closeSession(projectId: string, sessionId: string): Promise<void> {
     const key = runtimeKey(projectId, sessionId);
     const adapter = this.#sessions.get(key);
@@ -366,6 +457,17 @@ export class LoomRuntimeHost {
     const adapter = this.#sessions.get(runtimeKey(projectId, sessionId));
     if (adapter === undefined) {
       throw new RuntimeAdapterError("SESSION_NOT_FOUND", "The runtime session was not found");
+    }
+    return adapter;
+  }
+
+  #requireVeilSession(projectId: string, sessionId: string): LoomRuntimeAdapter {
+    const adapter = this.#requireSession(projectId, sessionId);
+    if (adapter.descriptor.id !== "veil") {
+      throw new RuntimeAdapterError(
+        "EXPERIMENT_NOT_FOUND",
+        "Experiment evidence belongs only to a Veil session",
+      );
     }
     return adapter;
   }
@@ -400,6 +502,10 @@ export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): Lo
     eventStores: options.eventStores,
     projects,
   });
+  const experiments = new LoomExperimentCoordinator({
+    eventStores: options.eventStores,
+    projects,
+  });
   const sessionFactory = new DeterministicPiSessionFactory({ referenceBacktests }, options.fixture);
   const rawPi = new RawPiRuntimeAdapter({
     eventStores: options.eventStores,
@@ -421,12 +527,22 @@ export function createDefaultRuntimeHost(options: DefaultRuntimeHostOptions): Lo
     projects,
     selections,
     promotions,
+    experiments,
     ...(options.idSource === undefined ? {} : { idSource: options.idSource }),
   });
 }
 
 function defaultIdSource(kind: RuntimeIdKind): string {
   return `${kind}_${randomUUID()}`;
+}
+
+function experimentRuntimeError(error: unknown): RuntimeAdapterError {
+  if (error instanceof ExperimentAccessError) {
+    return new RuntimeAdapterError(error.code, error.message, { cause: error });
+  }
+  return new RuntimeAdapterError("EXPERIMENT_UNAVAILABLE", "Experiment evidence is unavailable", {
+    cause: error,
+  });
 }
 
 function assertRuntimeId(input: string): void {

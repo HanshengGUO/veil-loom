@@ -2,6 +2,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import {
   isLoomPiRuntimeDescriptor,
   isLoomVeilExperimentRecordedPayload,
+  isLoomVeilReproductionCompletedPayload,
   isLoomVeilStageChangedPayload,
   isLoomVeilVerificationStartedPayload,
   type LoomAcceptedCommandResponse,
@@ -13,6 +14,7 @@ import {
   VEIL_PROFILE,
 } from "@veilquant/loom-protocol";
 import type { SessionEventStore, SessionEventStoreRegistry } from "./event-store.js";
+import type { OwnedExperiment } from "./experiments.js";
 import type { HostedPiSession, PiSessionFactory } from "./pi/deterministic-session.js";
 import {
   LOOM_REFERENCE_BACKTEST_TOOL_NAME,
@@ -29,6 +31,7 @@ import type {
   VeilBacktestSuccess,
   VeilDataToolResult,
   VeilExperimentArchive,
+  VeilExperimentReproduction,
   VeilHypothesisEntry,
 } from "./veil-api.js";
 
@@ -47,6 +50,8 @@ export type RuntimeAdapterErrorCode =
   | "TASK_NOT_FOUND"
   | "TASK_NOT_CANCELLABLE"
   | "PROMOTION_NOT_AVAILABLE"
+  | "EXPERIMENT_NOT_FOUND"
+  | "EXPERIMENT_UNAVAILABLE"
   | "RUNTIME_UNAVAILABLE";
 
 export class RuntimeAdapterError extends Error {
@@ -99,6 +104,14 @@ export interface StartPromotionInput {
   promotion: PreparedPromotion;
 }
 
+export interface StartReproductionInput {
+  projectId: string;
+  sessionId: string;
+  commandId: string;
+  taskId: string;
+  experiment: OwnedExperiment;
+}
+
 export interface CloseSessionInput {
   projectId: string;
   sessionId: string;
@@ -110,6 +123,7 @@ export interface LoomRuntimeAdapter {
   recover(input: SessionRecoveryPlan): Promise<RuntimeSession | undefined>;
   send(input: SendMessageInput): Promise<LoomAcceptedCommandResponse>;
   promote(input: StartPromotionInput): Promise<void>;
+  reproduce(input: StartReproductionInput): Promise<void>;
   cancel(input: CancelTaskInput): Promise<LoomAcceptedCommandResponse>;
   close(input: CloseSessionInput): Promise<void>;
   waitForIdle?(projectId: string, sessionId: string): Promise<void>;
@@ -561,6 +575,73 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
     void task.runPromise.catch(() => undefined);
   }
 
+  async reproduce(input: StartReproductionInput): Promise<void> {
+    if (this.descriptor.id !== "veil") {
+      throw new RuntimeAdapterError(
+        "EXPERIMENT_UNAVAILABLE",
+        "Only a Veil session can reproduce an Experiment",
+      );
+    }
+    const state = this.#requireSession(input.projectId, input.sessionId);
+    if (state.project.veil === undefined) {
+      throw new RuntimeAdapterError("PROJECT_NOT_READY", "The Veil project context is unavailable");
+    }
+    if (state.activeTask !== undefined) {
+      throw new RuntimeAdapterError("SESSION_BUSY", "The session already has an active task");
+    }
+    if (
+      input.experiment.projectId !== input.projectId ||
+      input.experiment.sessionId !== input.sessionId
+    ) {
+      throw new RuntimeAdapterError(
+        "EXPERIMENT_UNAVAILABLE",
+        "The Experiment does not belong to this Veil session",
+      );
+    }
+
+    const controller = new AbortController();
+    const task: ActiveTask = {
+      id: input.taskId,
+      commandId: input.commandId,
+      messageId: input.experiment.experimentId,
+      cancelRequested: false,
+      acceptingCancel: true,
+      assistantTurn: 0,
+      currentAssistant: undefined,
+      sawAborted: false,
+      sawError: false,
+      projectionError: undefined,
+      projectionQueue: Promise.resolve(),
+      runPromise: Promise.resolve(),
+      abort: async () => controller.abort(),
+    };
+    state.activeTask = task;
+    state.knownTasks.add(task.id);
+    try {
+      await state.store.append({
+        type: "session.status_changed",
+        payload: { status: "busy" },
+      });
+      await state.store.append({
+        type: "task.started",
+        payload: {
+          taskId: task.id,
+          commandId: task.commandId,
+          kind: "veil-reproduction",
+          label: "Reproduce Veil Experiment",
+        },
+      });
+    } catch (error) {
+      state.activeTask = undefined;
+      state.knownTasks.delete(task.id);
+      controller.abort();
+      throw error;
+    }
+
+    task.runPromise = this.#runReproduction(state, task, input, controller.signal);
+    void task.runPromise.catch(() => undefined);
+  }
+
   async cancel(input: CancelTaskInput): Promise<LoomAcceptedCommandResponse> {
     const state = this.#requireSession(input.projectId, input.sessionId);
     if (!state.knownTasks.has(input.taskId)) {
@@ -794,6 +875,77 @@ export class PiRuntimeAdapter implements LoomRuntimeAdapter {
         }
         await appendVeilStage(state.store, input, "independent-verification", "completed");
         await state.store.append({ type: "veil.experiment_recorded", payload });
+        await state.store.append({
+          type: "task.completed",
+          payload: { taskId: task.id },
+        });
+      }
+      await state.store.append({
+        type: "session.status_changed",
+        payload: { status: "ready" },
+      });
+    } finally {
+      if (state.activeTask === task) state.activeTask = undefined;
+    }
+  }
+
+  async #runReproduction(
+    state: RuntimeState,
+    task: ActiveTask,
+    input: StartReproductionInput,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const veil = state.project.veil;
+    if (veil === undefined) throw new Error("The Veil project context disappeared");
+    let failure: unknown;
+    let reproduction: VeilExperimentReproduction | undefined;
+    try {
+      throwIfPromotionAborted(signal);
+      reproduction = await veil.veil.api.reproduceProjectExperiment({
+        project: veil.project,
+        experimentId: input.experiment.experimentId,
+        signal,
+      });
+      throwIfPromotionAborted(signal);
+      assertVeilReproduction(reproduction, input.experiment);
+    } catch (error) {
+      failure = error;
+    }
+
+    task.acceptingCancel = false;
+    try {
+      if (task.cancelRequested || signal.aborted) {
+        await state.store.append({
+          type: "task.cancelled",
+          payload: { taskId: task.id },
+        });
+      } else if (failure !== undefined || reproduction === undefined) {
+        await state.store.append({
+          type: "task.failed",
+          payload: {
+            taskId: task.id,
+            code: "VEIL_REPRODUCTION_FAILED",
+            remedy:
+              "Inspect the trusted daemon and Veil diagnostics, restore the exact snapshots, and retry reproduction.",
+          },
+        });
+      } else {
+        const payload = {
+          format: "loom.veil-reproduction-completed.v0",
+          attemptId: input.experiment.attemptId,
+          taskId: task.id,
+          experimentId: reproduction.experimentId,
+          reproducedExperimentId: reproduction.reproducedExperimentId,
+          pricingHash: reproduction.pricingHash,
+          gateEvaluationHash: reproduction.gateEvaluationHash,
+          metricsHash: reproduction.metricsHash,
+          status: reproduction.status,
+          reproductionHash: reproduction.reproductionHash,
+        } as const;
+        if (!isLoomVeilReproductionCompletedPayload(payload)) {
+          throw new Error("Veil returned an invalid reproduction projection");
+        }
+        await state.store.append({ type: "veil.reproduction_completed", payload });
         await state.store.append({
           type: "task.completed",
           payload: { taskId: task.id },
@@ -1135,6 +1287,26 @@ function assertMatchingVeilArchive(
     experiment.claimStatus !== result.claimStatus
   ) {
     throw new Error("The independently verified Experiment archive does not match the result");
+  }
+}
+
+function assertVeilReproduction(
+  input: VeilExperimentReproduction,
+  expected: OwnedExperiment,
+): void {
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    input.format !== "veil.experiment-reproduction.v0" ||
+    input.status !== "matched" ||
+    input.experimentId !== expected.experimentId ||
+    input.reproducedExperimentId !== expected.experimentId ||
+    input.pricingHash !== expected.pricingHash ||
+    input.gateEvaluationHash !== expected.gateEvaluationHash ||
+    input.metricsHash !== expected.metricsHash ||
+    input.reproductionHash !== expected.reproductionHash
+  ) {
+    throw new Error("Veil returned an invalid Experiment reproduction");
   }
 }
 

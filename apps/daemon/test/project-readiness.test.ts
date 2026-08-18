@@ -197,6 +197,9 @@ function fakeVeilApi(projectRoot: string, project?: VeilProject): LoadedVeilApi 
       loadProjectExperiment: async () => {
         throw new Error("unused");
       },
+      reproduceProjectExperiment: async () => {
+        throw new Error("unused");
+      },
       VEIL_PROJECT_FORMAT: "veil.project.v0",
       VEIL_HYPOTHESIS_ENTRY: "veil.hypothesis.v0",
       VEIL_DATA_TOOL: "veil-data",

@@ -78,6 +78,19 @@ archive loader verifies the Experiment and its hashes match the tool result. A c
 malformed archive, cancellation, or interrupted task exposes no rejected or accepted state. Public
 events contain portable artifact and evidence identities, not project roots or archive paths.
 
+Experiment review remains a projection boundary. The project index contains only durable portable
+identities. Opening an Experiment reloads and verifies its archive, then returns a size-limited
+summary of method/data identities, aggregate metrics, gate reason codes, limitations, and hashes.
+The browser never receives captured artifact code, raw Arrow/pricing series, snapshot contents,
+archive references, or the project root.
+
+A reproduction request contains only the owned session and Experiment identities. The browser
+cannot supply expected metrics, a desired verdict, snapshot paths, code, pricing settings, or gates.
+Veil replays the archive inside the daemon's existing local authority. Loom publishes `matched` only
+after every returned identity validates; errors, cancellation, retention deletion, and restart do
+not produce a match. Reproduction confirms parity and has no authority to change the Experiment's
+original verdict.
+
 Pi's event stream is an internal input, not a public passthrough. Loom publishes visible assistant
 text and coarse lifecycle facts, but drops thinking blocks, tool arguments, tool result bodies, and
 provider error messages. The committed CI/development provider is Pi's in-memory faux provider with

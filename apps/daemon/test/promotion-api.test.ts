@@ -3,8 +3,12 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  isLoomAcceptedCommandResponse,
+  isLoomExperimentEvidenceResponse,
+  isLoomProjectExperimentsResponse,
   isLoomPromotionAcceptedResponse,
   isLoomVeilExperimentRecordedPayload,
+  isLoomVeilReproductionCompletedPayload,
   isLoomVeilVerificationStartedPayload,
   type LoomPromotionAcceptedResponse,
 } from "@veilquant/loom-protocol";
@@ -127,6 +131,109 @@ describe("Raw to Veil promotion API", () => {
     expect(archive.archiveHash).toBe(experiment.payload.archiveHash);
     expect(archive.execution.experiment.experimentId).toBe(experiment.payload.experimentId);
 
+    const historyResponse = await app.request("/v0/projects/daily-factor/experiments", { headers });
+    expect(historyResponse.status).toBe(200);
+    const history = (await historyResponse.json()) as unknown;
+    expect(isLoomProjectExperimentsResponse(history)).toBe(true);
+    if (!isLoomProjectExperimentsResponse(history)) {
+      throw new Error("Expected a project Experiment index");
+    }
+    expect(history.experiments[0]).toMatchObject({
+      sessionId: receipt.sessionId,
+      sourceSessionId: source.sessionId,
+      experimentId: experiment.payload.experimentId,
+      verdict: "rejected",
+    });
+
+    const evidenceResponse = await app.request(
+      `/v0/sessions/${receipt.sessionId}/experiments/${encodeURIComponent(experiment.payload.experimentId)}?projectId=daily-factor`,
+      { headers },
+    );
+    expect(evidenceResponse.status).toBe(200);
+    expect(evidenceResponse.headers.get("cache-control")).toContain("immutable");
+    const evidence = (await evidenceResponse.json()) as unknown;
+    expect(isLoomExperimentEvidenceResponse(evidence)).toBe(true);
+    if (!isLoomExperimentEvidenceResponse(evidence)) {
+      throw new Error("Expected bounded Experiment evidence");
+    }
+    expect(evidence).toMatchObject({
+      experimentId: experiment.payload.experimentId,
+      archiveHash: experiment.payload.archiveHash,
+      verdict: "rejected",
+      registrationStatus: "preregistered",
+      dataset: { id: "daily-factor-prices", version: "2026-08-18" },
+      sample: { periodsPerYear: 252 },
+    });
+    expect(evidence.metrics.length).toBeGreaterThan(0);
+    expect(evidence.gates.length).toBeGreaterThan(0);
+    expect(evidence.lineage.readSetSnapshotCount).toBeGreaterThan(0);
+    expect(JSON.stringify(evidence)).not.toMatch(/contentBase64|sourceLocator|veil-prices\.csv/i);
+
+    const reproductionCommand = await command(
+      `/v0/sessions/${receipt.sessionId}/experiments/${encodeURIComponent(experiment.payload.experimentId)}/reproductions?projectId=daily-factor`,
+      { format: "loom.experiment.reproduce.v0" },
+    );
+    expect(reproductionCommand.response.status).toBe(202);
+    if (
+      !isLoomAcceptedCommandResponse(reproductionCommand.body) ||
+      typeof reproductionCommand.body.taskId !== "string"
+    ) {
+      throw new Error("Expected a reproduction task receipt");
+    }
+    const reproductionTaskId = reproductionCommand.body.taskId;
+    await runtimeHost.waitForIdle("daily-factor", receipt.sessionId);
+    const afterReproduction = await sourceEvents(receipt.sessionId);
+    const reproduction = afterReproduction.find(
+      (event) =>
+        event.type === "veil.reproduction_completed" && event.payload.taskId === reproductionTaskId,
+    );
+    expect(isLoomVeilReproductionCompletedPayload(reproduction?.payload)).toBe(true);
+    expect(reproduction?.payload).toMatchObject({
+      experimentId: experiment.payload.experimentId,
+      reproducedExperimentId: experiment.payload.experimentId,
+      pricingHash: evidence.lineage.pricingHash,
+      gateEvaluationHash: evidence.lineage.gateEvaluationHash,
+      status: "matched",
+    });
+    expect(afterReproduction).toContainEqual(
+      expect.objectContaining({
+        type: "task.completed",
+        payload: { taskId: reproductionTaskId },
+      }),
+    );
+    expect(
+      afterReproduction.find((event) => event.type === "veil.experiment_recorded")?.payload.verdict,
+    ).toBe("rejected");
+    expect(await sourceEvents(source.sessionId)).toEqual(sourceBefore);
+
+    const secondReproduction = await command(
+      `/v0/sessions/${receipt.sessionId}/experiments/${encodeURIComponent(experiment.payload.experimentId)}/reproductions?projectId=daily-factor`,
+      { format: "loom.experiment.reproduce.v0" },
+    );
+    if (
+      !isLoomAcceptedCommandResponse(secondReproduction.body) ||
+      typeof secondReproduction.body.taskId !== "string"
+    ) {
+      throw new Error("Expected a second reproduction task receipt");
+    }
+    const cancelledReproductionTaskId = secondReproduction.body.taskId;
+    const cancelReproduction = await command(
+      `/v0/sessions/${receipt.sessionId}/tasks/${cancelledReproductionTaskId}/cancel?projectId=daily-factor`,
+      { format: "loom.task.cancel.v0" },
+    );
+    expect(cancelReproduction.response.status).toBe(202);
+    await runtimeHost.waitForIdle("daily-factor", receipt.sessionId);
+    const afterCancellation = await sourceEvents(receipt.sessionId);
+    expect(afterCancellation).toContainEqual(
+      expect.objectContaining({
+        type: "task.cancelled",
+        payload: { taskId: cancelledReproductionTaskId },
+      }),
+    );
+    expect(
+      afterCancellation.filter((event) => event.type === "veil.reproduction_completed"),
+    ).toHaveLength(1);
+
     const request = await readFile(
       join(projectRoot, ".veil", "loom-attempts", `${receipt.attemptId}.yaml`),
       "utf8",
@@ -138,7 +245,7 @@ describe("Raw to Veil promotion API", () => {
     expect(serialized).not.toContain(projectRoot);
     expect(serialized).not.toContain("veil-prices.csv");
     expect(serialized).not.toContain(".veil/experiments");
-  }, 60_000);
+  }, 120_000);
 
   it("rejects metric injection and artifact mismatch before creating a target session", async () => {
     const source = await seedRawView();
@@ -155,6 +262,12 @@ describe("Raw to Veil promotion API", () => {
     );
     expect(injected.response.status).toBe(400);
     expect(injected.body).toMatchObject({ code: "INVALID_REQUEST" });
+    const injectedReproduction = await command(
+      `/v0/sessions/${source.sessionId}/experiments/${encodeURIComponent(`sha256:${"0".repeat(64)}`)}/reproductions?projectId=daily-factor`,
+      { format: "loom.experiment.reproduce.v0", expectedVerdict: "accepted" },
+    );
+    expect(injectedReproduction.response.status).toBe(400);
+    expect(injectedReproduction.body).toMatchObject({ code: "INVALID_REQUEST" });
 
     const mismatch = await command(
       `/v0/sessions/${source.sessionId}/promotions?projectId=daily-factor`,

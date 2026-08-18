@@ -139,6 +139,41 @@ An `ok: false` Veil result or execution exception ends in `task.failed`; it does
 `task.cancelled`. A restart with no task terminal follows the normal `task.interrupted` rule and is
 never resumed or guessed successful.
 
+## Experiment evidence and reproduction
+
+Completed Experiment identities are discoverable without opening private archives:
+
+```text
+GET /v0/projects/:projectId/experiments
+GET /v0/sessions/:sessionId/experiments/:experimentId?projectId=:projectId
+```
+
+`loom.project-experiments.v0` contains at most 50 newest unique Experiment identities and reports
+`totalCount` plus `truncated`. Each item binds the target session/attempt/task to its Raw source,
+hypothesis, verdict, assurance, archive hash, and recorded time. It is a refresh/review index, not a
+new issuer of evidence.
+
+The second route reloads the immutable Veil archive and returns exact
+`loom.experiment-evidence.v0`. The bounded projection includes dataset and method identities, cost
+model, OOS sample, verified metrics, every gate outcome and reason code, rationale, a bounded lesson
+summary, and structural/series/read-set lineage identities. It excludes artifact contents, pricing
+series, snapshot bytes, filesystem references, and private diagnostics. Session, attempt,
+Experiment, archive, hypothesis, verdict, and assurance ownership must all match.
+
+Reproduction is explicit:
+
+```text
+POST /v0/sessions/:sessionId/experiments/:experimentId/reproductions?projectId=:projectId
+{ "format": "loom.experiment.reproduce.v0" }
+```
+
+The body has no expected metric, verdict, gate, path, or runtime field. A successful command starts
+a normal cancellable task. Only Veil's exact `veil.experiment-reproduction.v0` `matched` result may
+produce `loom.veil-reproduction-completed.v0`, and the original and reproduced Experiment IDs must
+be identical. The event also carries pricing, gate-evaluation, metric, and reproduction hashes.
+`matched` means reproducible; it does not upgrade or replace the archived verdict. Failure,
+cancellation, and interruption have ordinary task terminals and no reproduction-completed event.
+
 ## Session events
 
 Every event uses the `loom.event.v0` envelope:
@@ -263,16 +298,18 @@ POST /v0/projects/:projectId/sessions
 POST /v0/sessions/:sessionId/messages?projectId=:projectId
 POST /v0/sessions/:sessionId/selections?projectId=:projectId
 POST /v0/sessions/:sessionId/promotions?projectId=:projectId
+POST /v0/sessions/:sessionId/experiments/:experimentId/reproductions?projectId=:projectId
 POST /v0/sessions/:sessionId/tasks/:taskId/cancel?projectId=:projectId
 ```
 
 The corresponding body formats are `loom.session.create.v0`, `loom.message.send.v0`,
-`loom.selection.create.v0`, `loom.promotion.create.v0`, and `loom.task.cancel.v0`. Unknown fields,
-blank messages, oversized bodies, non-portable IDs, and unavailable profiles fail closed. Ordinary
-commands use `loom.command.accepted.v0`; promotion uses `loom.promotion.accepted.v0` so the source and
-new target session are explicit. Message and cancellation responses carry a task ID, while selection
-creation carries a selection ID. Completion never depends on the HTTP connection: it is reported by
-the ordered event stream.
+`loom.selection.create.v0`, `loom.promotion.create.v0`, `loom.experiment.reproduce.v0`, and
+`loom.task.cancel.v0`. Unknown fields, blank messages, oversized bodies, non-portable IDs, and
+unavailable profiles fail closed. Ordinary commands use `loom.command.accepted.v0`; promotion uses
+`loom.promotion.accepted.v0` so the source and new target session are explicit. Message,
+reproduction, and cancellation responses carry a task ID, while selection creation carries a
+selection ID. Completion never depends on the HTTP connection: it is reported by the ordered event
+stream.
 
 The Raw Pi adapter maps public text deltas, assistant completion, and coarse tool/task state. It does
 not expose model thinking, tool arguments, tool result bodies, or provider diagnostics. The

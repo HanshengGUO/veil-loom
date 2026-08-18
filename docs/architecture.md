@@ -97,6 +97,26 @@ per-fold or per-gate progress. `ok: false`, an exception, cancellation, or a dae
 failed, cancelled, or interrupted task with no rejected Experiment inference. Accepted, degraded,
 and rejected are reserved for an actual verified archive.
 
+## Experiment review and reproduction
+
+The project Experiment index is a bounded identity index over durable Veil session events. It lets
+the Web app reopen the latest completed attempt after refresh, but it is not a substitute for
+archive verification. Opening an item calls `loadProjectExperiment()` again and checks its session,
+attempt, hypothesis, verdict, assurance, and structural hashes before returning
+`loom.experiment-evidence.v0`.
+
+That response is a review projection, capped at 128 KiB. It contains verified method, dataset, cost,
+sample, metric, gate, limitation, and lineage identities. Artifact source, Arrow bytes, pricing
+payloads, snapshot contents, archive paths, and private diagnostics remain in the daemon. Long lesson
+lists carry an explicit total and truncation flag.
+
+Reproduction is a new cancellable task on the owning Veil session. The daemon calls Veil's public
+`reproduceProjectExperiment()` with the Experiment ID and project runtime; Veil reloads the archive,
+materializes the captured artifact, replays immutable read-set snapshots, and recomputes pricing and
+gates. Loom emits `veil.reproduction_completed` only for an exact `matched` result whose Experiment,
+pricing, gate-evaluation, metric, and reproduction hashes validate. Failure, cancellation, or restart
+produces no matched record. A match confirms reproducibility and never changes the original verdict.
+
 ## Pi host
 
 The daemon embeds Pi through its public programmatic `AgentSession` API. A runtime adapter owns each

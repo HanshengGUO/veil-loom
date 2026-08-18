@@ -50,3 +50,9 @@ are tracked independently from package versions.
   the end-to-end promotion fixture.
 - A Web **Promote with Veil** action that preserves the Raw view's exploratory label while showing
   the new attempt's real task and Experiment outcome.
+- A bounded project Experiment index and archive-revalidated `loom.experiment-evidence.v0`
+  projection with method, dataset, cost, metric, gate, limitation, and lineage details.
+- Explicit cancellable reproduction tasks through Veil's public archive/snapshot replay API, with a
+  fail-closed matched-identity event that never changes the original verdict.
+- An Experiment evidence drawer and refresh recovery for completed attempts, without exposing
+  artifact code, raw pricing payloads, snapshot contents, or private paths to the browser.

@@ -200,13 +200,24 @@ describe("session projection reducer", () => {
     let state = createSessionProjection("project-a", "session-a");
     const fixtures = [
       event(1, "session.created", { profile: "veil" }),
-      event(2, "task.started", { taskId: "task-veil", label: "Independent verification" }),
+      event(2, "task.started", {
+        taskId: "task-veil",
+        kind: "veil-verification",
+        label: "Independent verification",
+      }),
       event(3, "veil.verification_started", verificationStarted()),
       event(4, "veil.stage_changed", veilStage("development-data", "completed")),
       event(5, "veil.stage_changed", veilStage("independent-verification", "running")),
       event(6, "veil.stage_changed", veilStage("independent-verification", "completed")),
       event(7, "veil.experiment_recorded", experimentRecorded()),
       event(8, "task.completed", { taskId: "task-veil" }),
+      event(9, "task.started", {
+        taskId: "task-reproduction",
+        kind: "veil-reproduction",
+        label: "Reproduce Experiment",
+      }),
+      event(10, "veil.reproduction_completed", reproductionCompleted()),
+      event(11, "task.completed", { taskId: "task-reproduction" }),
     ];
     for (const fixture of fixtures) {
       const result = applySessionEvent(state, fixture);
@@ -227,8 +238,12 @@ describe("session projection reducer", () => {
           claimStatus: "rejected",
           assurance: { state: "rejected", issuer: "veil" },
         },
+        reproductions: [{ status: "matched", taskId: "task-reproduction" }],
       },
-      tasks: [{ id: "task-veil", status: "completed" }],
+      tasks: [
+        { id: "task-veil", status: "completed" },
+        { id: "task-reproduction", status: "completed" },
+      ],
     });
   });
 
@@ -252,7 +267,11 @@ describe("session projection reducer", () => {
 
     state = applySessionEvent(
       state,
-      event(2, "task.started", { taskId: "task-veil", label: "Independent verification" }),
+      event(2, "task.started", {
+        taskId: "task-veil",
+        kind: "veil-verification",
+        label: "Independent verification",
+      }),
     ).state;
     state = applySessionEvent(
       state,
@@ -303,7 +322,11 @@ describe("session projection reducer", () => {
     let state = createSessionProjection("project-a", "session-a");
     for (const fixture of [
       event(1, "session.created", { profile: "veil" }),
-      event(2, "task.started", { taskId: "task-veil", label: "Independent verification" }),
+      event(2, "task.started", {
+        taskId: "task-veil",
+        kind: "veil-verification",
+        label: "Independent verification",
+      }),
       event(3, "veil.verification_started", verificationStarted()),
       event(4, "task.failed", { taskId: "task-veil", code: "VEIL_VERIFICATION_FAILED" }),
     ]) {
@@ -311,6 +334,43 @@ describe("session projection reducer", () => {
     }
     expect(state.veilAttempt?.experiment).toBeUndefined();
     expect(state.tasks).toEqual([expect.objectContaining({ id: "task-veil", status: "failed" })]);
+  });
+
+  it("rejects reproduction drift, missing ownership, and a false completed terminal", () => {
+    let state = createSessionProjection("project-a", "session-a");
+    for (const fixture of [
+      event(1, "session.created", { profile: "veil" }),
+      event(2, "task.started", { taskId: "task-veil", kind: "veil-verification" }),
+      event(3, "veil.verification_started", verificationStarted()),
+      event(4, "veil.stage_changed", veilStage("development-data", "completed")),
+      event(5, "veil.stage_changed", veilStage("independent-verification", "running")),
+      event(6, "veil.stage_changed", veilStage("independent-verification", "completed")),
+      event(7, "veil.experiment_recorded", experimentRecorded()),
+      event(8, "task.completed", { taskId: "task-veil" }),
+      event(9, "task.started", { taskId: "task-reproduction", kind: "veil-reproduction" }),
+    ]) {
+      state = applySessionEvent(state, fixture).state;
+    }
+
+    const falseTerminal = applySessionEvent(
+      state,
+      event(10, "task.completed", { taskId: "task-reproduction" }),
+    );
+    expect(falseTerminal).toMatchObject({ outcome: "rejected", state: { lastSequence: 9 } });
+    const drifted = reproductionCompleted();
+    const drift = applySessionEvent(
+      state,
+      event(10, "veil.reproduction_completed", {
+        ...drifted,
+        reproducedExperimentId: `sha256:${"f".repeat(64)}`,
+      }),
+    );
+    expect(drift).toMatchObject({ outcome: "rejected", state: { lastSequence: 9 } });
+    const wrongTask = applySessionEvent(
+      state,
+      event(10, "veil.reproduction_completed", { ...drifted, taskId: "other-task" }),
+    );
+    expect(wrongTask).toMatchObject({ outcome: "rejected", state: { lastSequence: 9 } });
   });
 });
 
@@ -372,6 +432,22 @@ function experimentRecorded() {
       evidenceRefs: [experimentId, archiveHash],
       limitations: ["The source result remains exploratory."],
     },
+  };
+}
+
+function reproductionCompleted() {
+  const experimentId = `sha256:${"2".repeat(64)}`;
+  return {
+    format: "loom.veil-reproduction-completed.v0",
+    attemptId: "attempt-veil",
+    taskId: "task-reproduction",
+    experimentId,
+    reproducedExperimentId: experimentId,
+    pricingHash: `sha256:${"8".repeat(64)}`,
+    gateEvaluationHash: `sha256:${"9".repeat(64)}`,
+    metricsHash: `sha256:${"a".repeat(64)}`,
+    status: "matched",
+    reproductionHash: `sha256:${"b".repeat(64)}`,
   };
 }
 

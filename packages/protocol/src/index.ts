@@ -140,6 +140,10 @@ const EPOCH_PATTERN = "^-?(0|[1-9][0-9]*)$";
 export const LoomContentIdSchema = Type.String({ pattern: CONTENT_ID_PATTERN });
 export const LoomDigestSchema = Type.String({ pattern: DIGEST_PATTERN });
 export type LoomDigest = Static<typeof LoomDigestSchema>;
+
+export function isLoomDigest(input: unknown): input is LoomDigest {
+  return Check(LoomDigestSchema, input);
+}
 export const LoomTimeUnitSchema = Type.Union([
   Type.Literal("ms"),
   Type.Literal("us"),
@@ -1086,6 +1090,292 @@ export function isLoomVeilExperimentRecordedPayload(
   );
 }
 
+export const LoomExperimentEvidenceResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.experiment-evidence.v0"),
+    projectId: LoomPortableIdSchema,
+    sessionId: LoomPortableIdSchema,
+    attemptId: LoomPortableIdSchema,
+    experimentId: LoomDigestSchema,
+    archiveHash: LoomDigestSchema,
+    issuedAt: Type.String({ minLength: 1, maxLength: 64 }),
+    verdict: Type.Union([
+      Type.Literal("accepted"),
+      Type.Literal("degraded"),
+      Type.Literal("rejected"),
+    ]),
+    claimStatus: Type.Union([
+      Type.Literal("verified"),
+      Type.Literal("degraded"),
+      Type.Literal("rejected"),
+    ]),
+    registrationStatus: Type.Literal("preregistered"),
+    hypothesis: Type.Object(
+      {
+        ref: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+        statement: Type.String({ minLength: 1, maxLength: 4_096 }),
+      },
+      { additionalProperties: false },
+    ),
+    dataset: Type.Object(
+      {
+        id: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+        version: Type.String({ minLength: 1, maxLength: 256 }),
+        declarationHash: LoomDigestSchema,
+        degradations: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+          maxItems: 32,
+          uniqueItems: true,
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    pricingMethod: Type.Object(
+      {
+        id: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+        version: Type.String({ minLength: 1, maxLength: 256 }),
+        implementationHash: LoomDigestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    costModel: Type.Object(
+      {
+        reference: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+        version: Type.String({ minLength: 1, maxLength: 256 }),
+        implementationHash: LoomDigestSchema,
+        configurationHash: LoomDigestSchema,
+      },
+      { additionalProperties: false },
+    ),
+    sample: Type.Object(
+      {
+        observations: Type.Integer({ minimum: 1 }),
+        periodsPerYear: Type.Number({ exclusiveMinimum: 0 }),
+      },
+      { additionalProperties: false },
+    ),
+    effectiveTrials: Type.Integer({ minimum: 1 }),
+    metrics: Type.Array(
+      Type.Object(
+        {
+          name: Type.String({ minLength: 1, maxLength: 256 }),
+          scope: Type.Literal("walk-forward-oos"),
+          basis: Type.Union([Type.Literal("gross"), Type.Literal("net")]),
+          unit: Type.Union([Type.Literal("count"), Type.Literal("decimal"), Type.Literal("ratio")]),
+          value: Type.Number(),
+        },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 128 },
+    ),
+    gates: Type.Array(
+      Type.Object(
+        {
+          gateId: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+          gateVersion: Type.String({ minLength: 1, maxLength: 256 }),
+          category: Type.Union([Type.Literal("costs"), Type.Literal("statistical-gates")]),
+          required: Type.Boolean(),
+          outcome: Type.Union([
+            Type.Literal("failed"),
+            Type.Literal("passed"),
+            Type.Literal("unavailable"),
+          ]),
+          reasonCode: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+          implementationHash: LoomDigestSchema,
+          evidenceHash: LoomDigestSchema,
+        },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: 64 },
+    ),
+    rationale: Type.String({ minLength: 1, maxLength: 4_096 }),
+    lessons: Type.Object(
+      {
+        totalCount: Type.Integer({ minimum: 0, maximum: 64 }),
+        items: Type.Array(Type.String({ minLength: 1, maxLength: 4_096 }), { maxItems: 8 }),
+        truncated: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
+    lineage: Type.Object(
+      {
+        artifactHash: LoomDigestSchema,
+        parameterLockHash: LoomDigestSchema,
+        planHash: LoomDigestSchema,
+        contractHash: LoomDigestSchema,
+        candidateHash: LoomDigestSchema,
+        pricingHash: LoomDigestSchema,
+        gateEvaluationHash: LoomDigestSchema,
+        policyHash: LoomDigestSchema,
+        tradesHash: LoomDigestSchema,
+        grossReturnsHash: LoomDigestSchema,
+        costsHash: LoomDigestSchema,
+        netReturnsHash: LoomDigestSchema,
+        readSetSnapshotCount: Type.Integer({ minimum: 1 }),
+      },
+      { additionalProperties: false },
+    ),
+    assurance: LoomAssuranceSchema,
+  },
+  { additionalProperties: false, $id: "LoomExperimentEvidenceResponse" },
+);
+
+export type LoomExperimentEvidenceResponse = Static<typeof LoomExperimentEvidenceResponseSchema>;
+
+export function isLoomExperimentEvidenceResponse(
+  input: unknown,
+): input is LoomExperimentEvidenceResponse {
+  if (
+    !Check(LoomExperimentEvidenceResponseSchema, input) ||
+    !isCanonicalIsoTime(input.issuedAt) ||
+    !isLoomAssurance(input.assurance) ||
+    input.hypothesis.statement.trim() !== input.hypothesis.statement ||
+    input.metrics.some((metric) => !Number.isFinite(metric.value)) ||
+    !Number.isFinite(input.sample.periodsPerYear)
+  ) {
+    return false;
+  }
+  const expectedClaimStatus =
+    input.verdict === "accepted"
+      ? "verified"
+      : input.verdict === "degraded"
+        ? "degraded"
+        : "rejected";
+  return (
+    input.claimStatus === expectedClaimStatus &&
+    input.assurance.state === input.verdict &&
+    sameStrings(input.assurance.evidenceRefs, [input.experimentId, input.archiveHash]) &&
+    input.lessons.totalCount >= input.lessons.items.length &&
+    input.lessons.truncated === input.lessons.totalCount > input.lessons.items.length &&
+    new Set(
+      input.metrics.map(
+        (metric) => `${metric.scope}\0${metric.basis}\0${metric.name}\0${metric.unit}`,
+      ),
+    ).size === input.metrics.length &&
+    new Set(input.gates.map((gate) => gate.gateId)).size === input.gates.length
+  );
+}
+
+export const LoomProjectExperimentsResponseSchema = Type.Object(
+  {
+    format: Type.Literal("loom.project-experiments.v0"),
+    projectId: LoomPortableIdSchema,
+    totalCount: Type.Integer({ minimum: 0 }),
+    experiments: Type.Array(
+      Type.Object(
+        {
+          sessionId: LoomPortableIdSchema,
+          attemptId: LoomPortableIdSchema,
+          commandId: LoomPortableIdSchema,
+          taskId: LoomPortableIdSchema,
+          sourceSessionId: LoomPortableIdSchema,
+          sourceViewId: LoomContentIdSchema,
+          experimentId: LoomDigestSchema,
+          archiveHash: LoomDigestSchema,
+          recordedAt: Type.String({ minLength: 1, maxLength: 64 }),
+          hypothesis: Type.Object(
+            {
+              ref: Type.String({ pattern: VEIL_REFERENCE_PATTERN }),
+              statement: Type.String({ minLength: 1, maxLength: 4_096 }),
+            },
+            { additionalProperties: false },
+          ),
+          verdict: Type.Union([
+            Type.Literal("accepted"),
+            Type.Literal("degraded"),
+            Type.Literal("rejected"),
+          ]),
+          claimStatus: Type.Union([
+            Type.Literal("verified"),
+            Type.Literal("degraded"),
+            Type.Literal("rejected"),
+          ]),
+          registrationStatus: Type.Literal("preregistered"),
+          executionCount: Type.Integer({ minimum: 1 }),
+          assurance: LoomAssuranceSchema,
+        },
+        { additionalProperties: false },
+      ),
+      { maxItems: 50 },
+    ),
+    truncated: Type.Boolean(),
+  },
+  { additionalProperties: false, $id: "LoomProjectExperimentsResponse" },
+);
+
+export type LoomProjectExperimentsResponse = Static<typeof LoomProjectExperimentsResponseSchema>;
+
+export function isLoomProjectExperimentsResponse(
+  input: unknown,
+): input is LoomProjectExperimentsResponse {
+  if (!Check(LoomProjectExperimentsResponseSchema, input)) return false;
+  return (
+    input.totalCount >= input.experiments.length &&
+    input.truncated === input.totalCount > input.experiments.length &&
+    input.experiments.every(
+      (experiment) =>
+        experiment.sourceViewId.startsWith("view_") &&
+        isCanonicalIsoTime(experiment.recordedAt) &&
+        experiment.hypothesis.statement.trim() === experiment.hypothesis.statement &&
+        isLoomAssurance(experiment.assurance) &&
+        experiment.assurance.state === experiment.verdict &&
+        sameStrings(experiment.assurance.evidenceRefs, [
+          experiment.experimentId,
+          experiment.archiveHash,
+        ]) &&
+        experiment.claimStatus ===
+          (experiment.verdict === "accepted"
+            ? "verified"
+            : experiment.verdict === "degraded"
+              ? "degraded"
+              : "rejected"),
+    ) &&
+    new Set(input.experiments.map((experiment) => experiment.experimentId)).size ===
+      input.experiments.length
+  );
+}
+
+export const LoomCreateReproductionRequestSchema = Type.Object(
+  { format: Type.Literal("loom.experiment.reproduce.v0") },
+  { additionalProperties: false, $id: "LoomCreateReproductionRequest" },
+);
+
+export type LoomCreateReproductionRequest = Static<typeof LoomCreateReproductionRequestSchema>;
+
+export function isLoomCreateReproductionRequest(
+  input: unknown,
+): input is LoomCreateReproductionRequest {
+  return Check(LoomCreateReproductionRequestSchema, input);
+}
+
+export const LoomVeilReproductionCompletedPayloadSchema = Type.Object(
+  {
+    format: Type.Literal("loom.veil-reproduction-completed.v0"),
+    attemptId: LoomPortableIdSchema,
+    taskId: LoomPortableIdSchema,
+    experimentId: LoomDigestSchema,
+    reproducedExperimentId: LoomDigestSchema,
+    pricingHash: LoomDigestSchema,
+    gateEvaluationHash: LoomDigestSchema,
+    metricsHash: LoomDigestSchema,
+    status: Type.Literal("matched"),
+    reproductionHash: LoomDigestSchema,
+  },
+  { additionalProperties: false, $id: "LoomVeilReproductionCompletedPayload" },
+);
+
+export type LoomVeilReproductionCompletedPayload = Static<
+  typeof LoomVeilReproductionCompletedPayloadSchema
+>;
+
+export function isLoomVeilReproductionCompletedPayload(
+  input: unknown,
+): input is LoomVeilReproductionCompletedPayload {
+  return (
+    Check(LoomVeilReproductionCompletedPayloadSchema, input) &&
+    input.reproducedExperimentId === input.experimentId
+  );
+}
+
 export const LoomEventTypeSchema = Type.Union(
   [
     Type.Literal("session.created"),
@@ -1174,6 +1464,8 @@ export const LoomErrorCodeSchema = Type.Union(
     Type.Literal("TASK_NOT_FOUND"),
     Type.Literal("TASK_NOT_CANCELLABLE"),
     Type.Literal("PROMOTION_NOT_AVAILABLE"),
+    Type.Literal("EXPERIMENT_NOT_FOUND"),
+    Type.Literal("EXPERIMENT_UNAVAILABLE"),
     Type.Literal("RUNTIME_UNAVAILABLE"),
     Type.Literal("VIEW_NOT_FOUND"),
     Type.Literal("BLOB_NOT_FOUND"),

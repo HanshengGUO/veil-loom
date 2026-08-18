@@ -2,8 +2,10 @@ import { join } from "node:path";
 import {
   isLoomCancelTaskRequest,
   isLoomCreatePromotionRequest,
+  isLoomCreateReproductionRequest,
   isLoomCreateSelectionRequest,
   isLoomCreateSessionRequest,
+  isLoomDigest,
   isLoomPortableId,
   isLoomSendMessageRequest,
   type LoomAuthResponse,
@@ -130,6 +132,18 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
     }
   });
 
+  app.get("/v0/projects/:projectId/experiments", async (context) => {
+    try {
+      context.header("Cache-Control", "no-store");
+      context.header("Pragma", "no-cache");
+      return context.json(
+        await runtimeHost.projectExperiments(requireProjectId(context.req.param("projectId"))),
+      );
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
   app.post("/v0/projects/:projectId/sessions", async (context) => {
     try {
       const projectId = requireProjectId(context.req.param("projectId"));
@@ -174,6 +188,40 @@ export function createLoomApp(options: LoomAppOptions = {}): Hono {
         projectId,
         sourceSessionId,
         request,
+      });
+      return context.json(response, 202);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.get("/v0/sessions/:sessionId/experiments/:experimentId", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sessionId = requireSessionId(context.req.param("sessionId"));
+      const experimentId = requireExperimentId(context.req.param("experimentId"));
+      const evidence = await runtimeHost.experimentEvidence({
+        projectId,
+        sessionId,
+        experimentId,
+      });
+      return immutableJsonResponse(evidence, evidence.archiveHash);
+    } catch (error) {
+      return eventErrorResponse(error);
+    }
+  });
+
+  app.post("/v0/sessions/:sessionId/experiments/:experimentId/reproductions", async (context) => {
+    try {
+      const projectId = requireProjectId(context.req.query("projectId"));
+      const sessionId = requireSessionId(context.req.param("sessionId"));
+      const experimentId = requireExperimentId(context.req.param("experimentId"));
+      const request = await readJsonBody(context.req.raw);
+      if (!isLoomCreateReproductionRequest(request)) throw new RequestValidationError();
+      const response = await runtimeHost.reproduceExperiment({
+        projectId,
+        sessionId,
+        experimentId,
       });
       return context.json(response, 202);
     } catch (error) {
@@ -369,6 +417,11 @@ function requireSessionId(input: string): string {
   return input;
 }
 
+function requireExperimentId(input: string): string {
+  if (!isLoomDigest(input)) throw new RequestValidationError();
+  return input;
+}
+
 class RequestValidationError extends Error {
   constructor() {
     super("The JSON request does not match the command schema");
@@ -458,6 +511,9 @@ function eventErrorResponse(error: unknown): Response {
       status = 404;
       message =
         error.code === "SESSION_NOT_FOUND" ? "The session was not found" : "The task was not found";
+    } else if (error.code === "EXPERIMENT_NOT_FOUND") {
+      status = 404;
+      message = "The Experiment was not found in this Veil session";
     } else if (error.code === "RUNTIME_UNAVAILABLE") {
       status = 503;
       message = "The requested runtime is unavailable";
@@ -467,6 +523,9 @@ function eventErrorResponse(error: unknown): Response {
     } else if (error.code === "PROMOTION_NOT_AVAILABLE") {
       status = 409;
       message = "The selected result is not available for Veil promotion";
+    } else if (error.code === "EXPERIMENT_UNAVAILABLE") {
+      status = 409;
+      message = "The Experiment evidence or reproduction is unavailable";
     } else {
       status = 409;
       message =

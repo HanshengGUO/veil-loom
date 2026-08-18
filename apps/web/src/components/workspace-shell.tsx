@@ -2,20 +2,27 @@
 
 import {
   LOOM_PROFILE_DESCRIPTORS,
+  type LoomAcceptedCommandResponse,
   type LoomCapability,
   type LoomPromotionAcceptedResponse,
   type LoomSelection,
   type LoomSessionProfile,
   RAW_PI_PROFILE,
 } from "@veilquant/loom-protocol";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { type BacktestViewState, useBacktestView } from "../hooks/use-backtest-view";
+import {
+  type ExperimentEvidenceState,
+  useExperimentEvidence,
+} from "../hooks/use-experiment-evidence";
+import { useProjectExperiments } from "../hooks/use-project-experiments";
 import { type ProjectReadinessState, useProjectReadiness } from "../hooks/use-project-readiness";
 import {
   type BrowserConnectionState,
   useSessionEventStream,
 } from "../hooks/use-session-event-stream";
 import { resolveDaemonOrigin } from "../lib/daemon-auth";
+import { reproduceVeilExperiment } from "../lib/experiment-client";
 import { cancelVeilPromotion, createVeilPromotion } from "../lib/promotion-client";
 import type {
   ConversationEntry,
@@ -52,7 +59,17 @@ export function WorkspaceShell() {
   const [promotionPending, setPromotionPending] = useState(false);
   const [promotionError, setPromotionError] = useState<string>();
   const [cancelPending, setCancelPending] = useState(false);
+  const [reproductionReceipt, setReproductionReceipt] = useState<
+    LoomAcceptedCommandResponse & { readonly taskId: string }
+  >();
+  const [reproductionPending, setReproductionPending] = useState(false);
+  const [dismissedExperimentId, setDismissedExperimentId] = useState<string>();
   const projectReadiness = useProjectReadiness({
+    enabled: DEMO_STREAM_ENABLED,
+    daemonOrigin: DAEMON_ORIGIN,
+    projectId: DEMO_PROJECT_ID,
+  });
+  const projectExperiments = useProjectExperiments({
     enabled: DEMO_STREAM_ENABLED,
     daemonOrigin: DAEMON_ORIGIN,
     projectId: DEMO_PROJECT_ID,
@@ -69,6 +86,33 @@ export function WorkspaceShell() {
     projectId: DEMO_PROJECT_ID,
     sessionId: promotionReceipt?.sessionId ?? "promotion-pending",
   });
+  const experiment = promotionStream.projection.veilAttempt?.experiment;
+  const evidence = useExperimentEvidence({
+    enabled: DEMO_STREAM_ENABLED && promotionReceipt !== undefined && experiment !== undefined,
+    daemonOrigin: DAEMON_ORIGIN,
+    projectId: DEMO_PROJECT_ID,
+    sessionId: promotionReceipt?.sessionId ?? "experiment-pending",
+    experimentId: experiment?.experimentId ?? `sha256:${"0".repeat(64)}`,
+    attemptId: promotionReceipt?.attemptId ?? "attempt-pending",
+  });
+  useEffect(() => {
+    if (promotionReceipt !== undefined || projectExperiments.status !== "ready") return;
+    const latest = projectExperiments.index.experiments.find(
+      (candidate) =>
+        candidate.sourceSessionId === DEMO_SESSION_ID &&
+        candidate.experimentId !== dismissedExperimentId,
+    );
+    if (latest === undefined) return;
+    setPromotionReceipt({
+      format: "loom.promotion.accepted.v0",
+      commandId: latest.commandId,
+      projectId: DEMO_PROJECT_ID,
+      sourceSessionId: latest.sourceSessionId,
+      sessionId: latest.sessionId,
+      taskId: latest.taskId,
+      attemptId: latest.attemptId,
+    });
+  }, [dismissedExperimentId, projectExperiments, promotionReceipt]);
   const backtestView = useBacktestView({
     enabled: DEMO_STREAM_ENABLED,
     daemonOrigin: DAEMON_ORIGIN,
@@ -86,6 +130,17 @@ export function WorkspaceShell() {
     [sessionProfileId],
   );
   const latestTask = projection.tasks.at(-1);
+  const latestProjectedReproductionTask = [...promotionStream.projection.tasks]
+    .reverse()
+    .find((candidate) => candidate.kind === "veil-reproduction");
+  const reproductionTask =
+    reproductionReceipt === undefined
+      ? latestProjectedReproductionTask
+      : promotionStream.projection.tasks.find(
+          (candidate) => candidate.id === reproductionReceipt.taskId,
+        );
+  const reproductionAwaitingStream =
+    reproductionReceipt !== undefined && reproductionTask === undefined;
   const activeTab = projection.activeView?.kind === "backtest" ? "Backtest" : "Explore";
   const canPromote =
     DEMO_STREAM_ENABLED &&
@@ -113,6 +168,7 @@ export function WorkspaceShell() {
         hypothesisStatement: hypothesisStatement.trim(),
       });
       setPromotionReceipt(receipt);
+      setDismissedExperimentId(undefined);
     } catch (error) {
       setPromotionError(
         error instanceof Error ? error.message : "The verification attempt could not start.",
@@ -136,6 +192,48 @@ export function WorkspaceShell() {
     } catch (error) {
       setPromotionError(
         error instanceof Error ? error.message : "The verification task could not be cancelled.",
+      );
+    } finally {
+      setCancelPending(false);
+    }
+  }
+
+  async function startReproduction() {
+    if (promotionReceipt === undefined || experiment === undefined || reproductionPending) return;
+    setReproductionPending(true);
+    setPromotionError(undefined);
+    try {
+      const receipt = await reproduceVeilExperiment({
+        daemonOrigin: DAEMON_ORIGIN,
+        projectId: DEMO_PROJECT_ID,
+        sessionId: promotionReceipt.sessionId,
+        experimentId: experiment.experimentId,
+        attemptId: promotionReceipt.attemptId,
+      });
+      setReproductionReceipt(receipt);
+    } catch (error) {
+      setPromotionError(
+        error instanceof Error ? error.message : "The Experiment could not be reproduced.",
+      );
+    } finally {
+      setReproductionPending(false);
+    }
+  }
+
+  async function cancelReproduction() {
+    if (promotionReceipt === undefined || reproductionTask === undefined || cancelPending) return;
+    setCancelPending(true);
+    setPromotionError(undefined);
+    try {
+      await cancelVeilPromotion({
+        daemonOrigin: DAEMON_ORIGIN,
+        projectId: DEMO_PROJECT_ID,
+        sessionId: promotionReceipt.sessionId,
+        taskId: reproductionTask.id,
+      });
+    } catch (error) {
+      setPromotionError(
+        error instanceof Error ? error.message : "The reproduction task could not be cancelled.",
       );
     } finally {
       setCancelPending(false);
@@ -333,19 +431,27 @@ export function WorkspaceShell() {
         canPromote={canPromote}
         cancelPending={cancelPending}
         connection={promotionStream.connection}
+        evidence={evidence}
         error={promotionError}
         hypothesisStatement={hypothesisStatement}
         onArtifactReference={setArtifactReference}
         onCancel={() => void cancelPromotion()}
+        onCancelReproduction={() => void cancelReproduction()}
         onHypothesisStatement={setHypothesisStatement}
         onReset={() => {
+          setDismissedExperimentId(experiment?.experimentId);
           setPromotionReceipt(undefined);
+          setReproductionReceipt(undefined);
           setPromotionError(undefined);
         }}
+        onReproduce={() => void startReproduction()}
         onStart={() => void startPromotion()}
         pending={promotionPending}
         projection={promotionStream.projection}
         receipt={promotionReceipt}
+        reproductionAwaitingStream={reproductionAwaitingStream}
+        reproductionPending={reproductionPending}
+        reproductionTask={reproductionTask}
       />
     </main>
   );
@@ -356,31 +462,43 @@ function PromotionPanel({
   canPromote,
   cancelPending,
   connection,
+  evidence,
   error,
   hypothesisStatement,
   onArtifactReference,
   onCancel,
+  onCancelReproduction,
   onHypothesisStatement,
   onReset,
+  onReproduce,
   onStart,
   pending,
   projection,
   receipt,
+  reproductionAwaitingStream,
+  reproductionPending,
+  reproductionTask,
 }: Readonly<{
   artifactReference: string;
   canPromote: boolean;
   cancelPending: boolean;
   connection: BrowserConnectionState;
+  evidence: ExperimentEvidenceState;
   error: string | undefined;
   hypothesisStatement: string;
   onArtifactReference: (value: string) => void;
   onCancel: () => void;
+  onCancelReproduction: () => void;
   onHypothesisStatement: (value: string) => void;
   onReset: () => void;
+  onReproduce: () => void;
   onStart: () => void;
   pending: boolean;
   projection: SessionProjection;
   receipt: LoomPromotionAcceptedResponse | undefined;
+  reproductionAwaitingStream: boolean;
+  reproductionPending: boolean;
+  reproductionTask: TaskProjection | undefined;
 }>) {
   const task =
     receipt === undefined
@@ -390,6 +508,12 @@ function PromotionPanel({
     task !== undefined && ["cancelled", "completed", "failed", "interrupted"].includes(task.status);
   const experiment = projection.veilAttempt?.experiment;
   const canCancel = task?.status === "running" && !cancelPending;
+  const reproductionRunning =
+    reproductionPending ||
+    reproductionAwaitingStream ||
+    reproductionTask?.status === "running" ||
+    reproductionTask?.status === "cancel-requested";
+  const latestReproduction = projection.veilAttempt?.reproductions.at(-1);
 
   return (
     <section className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/90 p-5">
@@ -468,7 +592,7 @@ function PromotionPanel({
                   {cancelPending ? "Cancelling…" : "Cancel"}
                 </button>
               ) : null}
-              {terminal ? (
+              {terminal && !reproductionRunning ? (
                 <button
                   className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-slate-300"
                   onClick={onReset}
@@ -508,6 +632,15 @@ function PromotionPanel({
                 This assurance belongs to the new attempt only. The source chart remains
                 exploratory.
               </p>
+              <ExperimentEvidence
+                cancelPending={cancelPending}
+                evidence={evidence}
+                latestReproduction={latestReproduction}
+                onCancel={onCancelReproduction}
+                onReproduce={onReproduce}
+                reproductionPending={reproductionPending}
+                reproductionTask={reproductionTask}
+              />
             </div>
           )}
         </div>
@@ -519,6 +652,200 @@ function PromotionPanel({
       )}
     </section>
   );
+}
+
+function ExperimentEvidence({
+  cancelPending,
+  evidence,
+  latestReproduction,
+  onCancel,
+  onReproduce,
+  reproductionPending,
+  reproductionTask,
+}: Readonly<{
+  cancelPending: boolean;
+  evidence: ExperimentEvidenceState;
+  latestReproduction:
+    | NonNullable<SessionProjection["veilAttempt"]>["reproductions"][number]
+    | undefined;
+  onCancel: () => void;
+  onReproduce: () => void;
+  reproductionPending: boolean;
+  reproductionTask: TaskProjection | undefined;
+}>) {
+  if (evidence.status === "disabled" || evidence.status === "loading") {
+    return <p className="mt-4 text-xs text-[var(--muted)]">Loading verified evidence…</p>;
+  }
+  if (evidence.status === "error") {
+    return (
+      <p className="mt-4 text-xs text-red-300" role="alert">
+        {evidence.message}
+      </p>
+    );
+  }
+
+  const record = evidence.evidence;
+  const reproductionRunning =
+    reproductionPending ||
+    reproductionTask?.status === "running" ||
+    reproductionTask?.status === "cancel-requested";
+  return (
+    <div className="mt-4 grid gap-4 border-t border-[var(--border)] pt-4">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <EvidenceFact label="Dataset" value={`${record.dataset.id} · ${record.dataset.version}`} />
+        <EvidenceFact
+          label="Pricing method"
+          value={`${record.pricingMethod.id} · ${record.pricingMethod.version}`}
+        />
+        <EvidenceFact
+          label="OOS sample"
+          value={`${record.sample.observations} observations · ${record.sample.periodsPerYear}/year`}
+        />
+        <EvidenceFact label="Effective trials" value={String(record.effectiveTrials)} />
+      </div>
+
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          Verified metrics
+        </p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {record.metrics.map((metric) => (
+            <div
+              className="rounded-lg border border-[var(--border)] px-3 py-2"
+              key={`${metric.scope}\0${metric.basis}\0${metric.name}\0${metric.unit}`}
+            >
+              <p className="text-[10px] text-slate-500">{metric.name}</p>
+              <p className="mt-1 font-mono text-xs text-slate-200">
+                {formatEvidenceValue(metric.value)} {metric.unit}
+              </p>
+              <p className="mt-1 text-[10px] text-slate-500">
+                {metric.basis} · {metric.scope}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          Gate review
+        </p>
+        <div className="mt-2 grid gap-2 lg:grid-cols-2">
+          {record.gates.map((gate) => (
+            <div
+              className="flex items-start justify-between gap-3 rounded-lg border border-[var(--border)] px-3 py-2"
+              key={gate.gateId}
+            >
+              <div>
+                <p className="text-xs text-slate-200">{gate.gateId}</p>
+                <p className="mt-1 font-mono text-[10px] text-slate-500">{gate.reasonCode}</p>
+              </div>
+              <span
+                className={`text-[10px] font-semibold uppercase ${
+                  gate.outcome === "passed"
+                    ? "text-[var(--accent)]"
+                    : gate.outcome === "unavailable"
+                      ? "text-[var(--warning)]"
+                      : "text-red-300"
+                }`}
+              >
+                {gate.outcome}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-[var(--border)] bg-black/15 p-3">
+        <p className="text-xs text-slate-300">{record.rationale}</p>
+        {keyedLessons(record.lessons.items).map((lesson) => (
+          <p className="mt-2 text-xs text-[var(--muted)]" key={lesson.key}>
+            {lesson.text}
+          </p>
+        ))}
+        {record.lessons.truncated ? (
+          <p className="mt-2 text-[10px] text-slate-500">
+            Showing {record.lessons.items.length} of {record.lessons.totalCount} archived lessons.
+          </p>
+        ) : null}
+      </div>
+
+      <details className="rounded-lg border border-[var(--border)] px-3 py-2 text-[10px] text-slate-500">
+        <summary className="cursor-pointer text-xs text-slate-300">Evidence identities</summary>
+        <div className="mt-2 grid gap-1 font-mono">
+          <span>archive {record.archiveHash}</span>
+          <span>artifact {record.lineage.artifactHash}</span>
+          <span>contract {record.lineage.contractHash}</span>
+          <span>pricing {record.lineage.pricingHash}</span>
+          <span>gates {record.lineage.gateEvaluationHash}</span>
+          <span>{record.lineage.readSetSnapshotCount} immutable read-set snapshots</span>
+        </div>
+      </details>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-lime-200/15 bg-[var(--accent-soft)]/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold text-slate-200">Exact reproduction</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            {latestReproduction !== undefined
+              ? "Matched artifact, snapshot, pricing, metric, and gate identities. The original verdict is unchanged."
+              : reproductionTask?.status === "failed"
+                ? "Reproduction failed; no matched identity was inferred."
+                : reproductionTask?.status === "cancelled" ||
+                    reproductionTask?.status === "interrupted"
+                  ? `${reproductionTask.status} · no reproduction claim`
+                  : reproductionRunning
+                    ? "Re-executing the archived artifact from immutable snapshots…"
+                    : "Re-run the archived artifact, pricing, and gates without contacting a model."}
+          </p>
+          {latestReproduction === undefined ? null : (
+            <p className="mt-1 font-mono text-[10px] text-slate-500">
+              {latestReproduction.reproductionHash}
+            </p>
+          )}
+        </div>
+        {reproductionRunning ? (
+          <button
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs text-slate-300 disabled:opacity-50"
+            disabled={cancelPending || reproductionTask?.status !== "running"}
+            onClick={onCancel}
+            type="button"
+          >
+            {cancelPending ? "Cancelling…" : "Cancel reproduction"}
+          </button>
+        ) : (
+          <button
+            className="rounded-lg bg-[var(--accent)] px-3 py-2 text-xs font-semibold text-[#17200e]"
+            onClick={onReproduce}
+            type="button"
+          >
+            {latestReproduction === undefined ? "Reproduce Experiment" : "Reproduce again"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceFact({ label, value }: Readonly<{ label: string; value: string }>) {
+  return (
+    <div className="rounded-lg border border-[var(--border)] px-3 py-2">
+      <p className="text-[10px] text-slate-500">{label}</p>
+      <p className="mt-1 text-xs text-slate-200">{value}</p>
+    </div>
+  );
+}
+
+function formatEvidenceValue(value: number): string {
+  return Number.isInteger(value) ? value.toString() : value.toPrecision(6).replace(/\.?0+$/u, "");
+}
+
+function keyedLessons(items: readonly string[]): readonly { key: string; text: string }[] {
+  const occurrences = new Map<string, number>();
+  return items.map((text) => {
+    const occurrence = (occurrences.get(text) ?? 0) + 1;
+    occurrences.set(text, occurrence);
+    return { key: `${text}\0${occurrence}`, text };
+  });
 }
 
 function VeilReadiness({ state }: Readonly<{ state: ProjectReadinessState }>) {

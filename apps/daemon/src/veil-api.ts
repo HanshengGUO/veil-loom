@@ -88,23 +88,91 @@ export type VeilBacktestToolResult = VeilBacktestSuccess | VeilBacktestFailure;
 export interface VeilExperimentArchive {
   readonly format: "veil.experiment-archive.v0";
   readonly archiveHash: string;
+  readonly readSetSnapshotIds: readonly string[];
   readonly execution: {
     readonly format: "veil.experiment-execution.v0";
     readonly experiment: {
+      readonly format: "veil.experiment.v0";
       readonly status: "complete";
       readonly experimentId: string;
       readonly candidateHash: string;
       readonly artifactHash: string;
       readonly planHash: string;
       readonly contractHash: string;
+      readonly parameterLockHash: string;
+      readonly pricingHash: string;
+      readonly gateEvaluationHash: string;
+      readonly policyHash: string;
+      readonly pricing: {
+        readonly method: {
+          readonly id: string;
+          readonly version: string;
+          readonly implementationHash: string;
+        };
+        readonly costModel: {
+          readonly reference: string;
+          readonly version: string;
+          readonly implementationHash: string;
+          readonly configurationHash: string;
+        };
+        readonly sample: {
+          readonly observations: number;
+          readonly periodsPerYear: number;
+        };
+        readonly series: {
+          readonly tradesHash: string;
+          readonly grossReturnsHash: string;
+          readonly costsHash: string;
+          readonly netReturnsHash: string;
+        };
+      };
+      readonly effectiveTrials: number;
       readonly hypothesis: {
         readonly hypothesisRef: string;
+        readonly registrationHash: string | null;
         readonly registrationStatus: "preregistered" | "exploratory";
       };
+      readonly dataset: {
+        readonly dataset: string;
+        readonly version: string;
+        readonly declarationHash: string;
+        readonly degradations: readonly string[];
+      };
+      readonly metrics: readonly {
+        readonly name: string;
+        readonly scope: "walk-forward-oos";
+        readonly basis: "gross" | "net";
+        readonly unit: "count" | "decimal" | "ratio";
+        readonly value: number;
+      }[];
+      readonly gates: readonly {
+        readonly gateId: string;
+        readonly gateVersion: string;
+        readonly category: "costs" | "statistical-gates";
+        readonly required: boolean;
+        readonly outcome: "failed" | "passed" | "unavailable";
+        readonly reasonCode: string;
+        readonly implementationHash: string;
+        readonly evidenceHash: string;
+      }[];
       readonly verdict: "accepted" | "degraded" | "rejected";
       readonly claimStatus: "verified" | "degraded" | "rejected";
+      readonly issuedAt: string;
+      readonly rationale: string;
+      readonly lessons: readonly string[];
     };
   };
+}
+
+export interface VeilExperimentReproduction {
+  readonly format: "veil.experiment-reproduction.v0";
+  readonly experimentId: string;
+  readonly reproducedExperimentId: string;
+  readonly pricingHash: string;
+  readonly gateEvaluationHash: string;
+  readonly metricsHash: string;
+  readonly status: "matched";
+  readonly reproductionHash: string;
 }
 
 export interface VeilPublicApi {
@@ -143,6 +211,11 @@ export interface VeilPublicApi {
     projectRoot: string,
     experimentId: string,
   ) => Promise<VeilExperimentArchive>;
+  readonly reproduceProjectExperiment: (input: {
+    readonly project: VeilProject;
+    readonly experimentId: string;
+    readonly signal?: AbortSignal;
+  }) => Promise<VeilExperimentReproduction>;
   readonly VEIL_PROJECT_FORMAT: "veil.project.v0";
   readonly VEIL_HYPOTHESIS_ENTRY: "veil.hypothesis.v0";
   readonly VEIL_DATA_TOOL: "veil-data";
@@ -274,6 +347,8 @@ function isVeilPublicApi(input: unknown): input is VeilPublicApi {
     typeof input.executeVeilBacktestTool === "function" &&
     "loadProjectExperiment" in input &&
     typeof input.loadProjectExperiment === "function" &&
+    "reproduceProjectExperiment" in input &&
+    typeof input.reproduceProjectExperiment === "function" &&
     "VEIL_PROJECT_FORMAT" in input &&
     input.VEIL_PROJECT_FORMAT === "veil.project.v0" &&
     "VEIL_HYPOTHESIS_ENTRY" in input &&

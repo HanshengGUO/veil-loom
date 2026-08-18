@@ -26,5 +26,6 @@ Loading the Veil declaration proves only that the profile is ready. The scripted
 does not auto-promote anything. The separate Web action verifies the selected artifact digest,
 creates a new Veil session, rereads this registered panel, and may issue an Experiment after the
 complete contract/pricing/gate path. It never imports the Raw chart metrics as targets. This fixture
-is illustrative and not investment advice; the full evidence and reproduction UI remains a later
-slice.
+is illustrative and not investment advice. The evidence drawer shows the verified OOS metrics and
+gate reasons, and its reproduction action replays the archived artifact from immutable snapshots;
+neither operation changes the Raw view or the Experiment's original verdict.

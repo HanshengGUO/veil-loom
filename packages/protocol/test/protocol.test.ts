@@ -10,11 +10,14 @@ import {
   isLoomBlobRecord,
   isLoomCancelTaskRequest,
   isLoomCreatePromotionRequest,
+  isLoomCreateReproductionRequest,
   isLoomCreateSelectionRequest,
   isLoomCreateSessionRequest,
   isLoomEventEnvelope,
+  isLoomExperimentEvidenceResponse,
   isLoomPiRuntimeDescriptor,
   isLoomPortableId,
+  isLoomProjectExperimentsResponse,
   isLoomProjectReadinessResponse,
   isLoomPromotionAcceptedResponse,
   isLoomPublishedViewDescriptor,
@@ -22,6 +25,7 @@ import {
   isLoomSelectionCreatedPayload,
   isLoomSendMessageRequest,
   isLoomVeilExperimentRecordedPayload,
+  isLoomVeilReproductionCompletedPayload,
   isLoomVeilStageChangedPayload,
   isLoomVeilVerificationStartedPayload,
   LOOM_PROFILE_DESCRIPTORS,
@@ -377,7 +381,172 @@ describe("Loom Veil promotion protocol", () => {
       }),
     ).toBe(false);
   });
+
+  it("accepts bounded evidence and exact matched reproduction without changing the verdict", () => {
+    const evidence = experimentEvidence();
+    expect(isLoomExperimentEvidenceResponse(evidence)).toBe(true);
+    expect(isLoomCreateReproductionRequest({ format: "loom.experiment.reproduce.v0" })).toBe(true);
+    expect(
+      isLoomProjectExperimentsResponse({
+        format: "loom.project-experiments.v0",
+        projectId: "project-1",
+        totalCount: 1,
+        experiments: [
+          {
+            sessionId: "veil-session",
+            attemptId: "attempt-1",
+            commandId: "command-1",
+            taskId: "task-1",
+            sourceSessionId: "raw-session",
+            sourceViewId: `view_${"a".repeat(64)}`,
+            experimentId: evidence.experimentId,
+            archiveHash: evidence.archiveHash,
+            recordedAt: evidence.issuedAt,
+            hypothesis: evidence.hypothesis,
+            verdict: evidence.verdict,
+            claimStatus: evidence.claimStatus,
+            registrationStatus: evidence.registrationStatus,
+            executionCount: 33,
+            assurance: evidence.assurance,
+          },
+        ],
+        truncated: false,
+      }),
+    ).toBe(true);
+    expect(
+      isLoomVeilReproductionCompletedPayload({
+        format: "loom.veil-reproduction-completed.v0",
+        attemptId: "attempt-1",
+        taskId: "task-reproduce-1",
+        experimentId: evidence.experimentId,
+        reproducedExperimentId: evidence.experimentId,
+        pricingHash: evidence.lineage.pricingHash,
+        gateEvaluationHash: evidence.lineage.gateEvaluationHash,
+        metricsHash: `sha256:${"d".repeat(64)}`,
+        status: "matched",
+        reproductionHash: `sha256:${"e".repeat(64)}`,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects truncated evidence lies and reproduction identity drift", () => {
+    const evidence = experimentEvidence();
+    expect(
+      isLoomExperimentEvidenceResponse({
+        ...evidence,
+        lessons: { ...evidence.lessons, totalCount: 2, truncated: false },
+      }),
+    ).toBe(false);
+    expect(
+      isLoomExperimentEvidenceResponse({
+        ...evidence,
+        gates: [...evidence.gates, evidence.gates[0]],
+      }),
+    ).toBe(false);
+    expect(
+      isLoomExperimentEvidenceResponse({
+        ...evidence,
+        metrics: [...evidence.metrics, evidence.metrics[0]],
+      }),
+    ).toBe(false);
+    expect(
+      isLoomVeilReproductionCompletedPayload({
+        format: "loom.veil-reproduction-completed.v0",
+        attemptId: "attempt-1",
+        taskId: "task-reproduce-1",
+        experimentId: evidence.experimentId,
+        reproducedExperimentId: `sha256:${"f".repeat(64)}`,
+        pricingHash: evidence.lineage.pricingHash,
+        gateEvaluationHash: evidence.lineage.gateEvaluationHash,
+        metricsHash: `sha256:${"d".repeat(64)}`,
+        status: "matched",
+        reproductionHash: `sha256:${"e".repeat(64)}`,
+      }),
+    ).toBe(false);
+  });
 });
+
+function experimentEvidence() {
+  const experimentId = `sha256:${"2".repeat(64)}`;
+  const archiveHash = `sha256:${"3".repeat(64)}`;
+  return {
+    format: "loom.experiment-evidence.v0",
+    projectId: "project-1",
+    sessionId: "veil-session",
+    attemptId: "attempt-1",
+    experimentId,
+    archiveHash,
+    issuedAt: "2026-08-18T00:00:00.000Z",
+    verdict: "rejected",
+    claimStatus: "rejected",
+    registrationStatus: "preregistered",
+    hypothesis: { ref: "hypothesis:example", statement: "The signal survives verification." },
+    dataset: {
+      id: "daily-factor-prices",
+      version: "2026-08-18",
+      declarationHash: `sha256:${"4".repeat(64)}`,
+      degradations: [],
+    },
+    pricingMethod: {
+      id: "veil.quantile-close-to-close",
+      version: "0.1.0",
+      implementationHash: `sha256:${"5".repeat(64)}`,
+    },
+    costModel: {
+      reference: "daily-factor-10bps",
+      version: "0.1.0",
+      implementationHash: `sha256:${"6".repeat(64)}`,
+      configurationHash: `sha256:${"7".repeat(64)}`,
+    },
+    sample: { observations: 30, periodsPerYear: 252 },
+    effectiveTrials: 1,
+    metrics: [
+      {
+        name: "annualized-sharpe",
+        scope: "walk-forward-oos",
+        basis: "net",
+        unit: "ratio",
+        value: -0.5,
+      },
+    ],
+    gates: [
+      {
+        gateId: "cost-availability",
+        gateVersion: "0.1.0",
+        category: "costs",
+        required: true,
+        outcome: "passed",
+        reasonCode: "COST_EVIDENCE_AVAILABLE",
+        implementationHash: `sha256:${"8".repeat(64)}`,
+        evidenceHash: `sha256:${"9".repeat(64)}`,
+      },
+    ],
+    rationale: "The complete policy rejected the Experiment.",
+    lessons: { totalCount: 1, items: ["Address the failed gate."], truncated: false },
+    lineage: {
+      artifactHash: `sha256:${"a".repeat(64)}`,
+      parameterLockHash: `sha256:${"b".repeat(64)}`,
+      planHash: `sha256:${"c".repeat(64)}`,
+      contractHash: `sha256:${"d".repeat(64)}`,
+      candidateHash: `sha256:${"e".repeat(64)}`,
+      pricingHash: `sha256:${"f".repeat(64)}`,
+      gateEvaluationHash: `sha256:${"1".repeat(64)}`,
+      policyHash: `sha256:${"0".repeat(64)}`,
+      tradesHash: `sha256:${"a".repeat(64)}`,
+      grossReturnsHash: `sha256:${"b".repeat(64)}`,
+      costsHash: `sha256:${"c".repeat(64)}`,
+      netReturnsHash: `sha256:${"d".repeat(64)}`,
+      readSetSnapshotCount: 30,
+    },
+    assurance: {
+      format: "loom.assurance.v0",
+      state: "rejected",
+      issuer: "veil",
+      evidenceRefs: [experimentId, archiveHash],
+      limitations: ["The source Raw result remains exploratory."],
+    },
+  } as const;
+}
 
 describe("Loom selection protocol", () => {
   const from = { epoch: "1700000000000", unit: "ms" } as const;
