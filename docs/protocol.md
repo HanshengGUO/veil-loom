@@ -1,5 +1,7 @@
 # Protocol
 
+[简体中文](protocol.zh-CN.md)
+
 The protocol package is the only contract shared by the browser and daemon. It contains exact
 TypeBox schemas and TypeScript types without network, filesystem, React, Pi, or Veil dependencies.
 

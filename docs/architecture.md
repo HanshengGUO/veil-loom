@@ -1,5 +1,7 @@
 # Architecture
 
+[简体中文](architecture.zh-CN.md)
+
 Veil Loom is split into a browser application, a local daemon, and a dependency-free protocol
 package.
 

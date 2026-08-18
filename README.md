@@ -1,5 +1,7 @@
 # Veil Loom
 
+[简体中文](README.zh-CN.md)
+
 Veil Loom is a local-first visual workspace for quantitative research with
 [Pi](https://github.com/earendil-works/pi) and [Veil](https://github.com/HanshengGUO/veil).
 
@@ -56,6 +58,23 @@ apps/daemon/       local Node service and process supervisor
 packages/protocol/ shared versioned schemas
 docs/              public architecture, protocol, and security notes
 ```
+
+## Documentation
+
+- [Getting started](docs/getting-started.md)
+- [Research workflow](docs/research-workflow.md)
+- [Core concepts](docs/core-concepts.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Architecture](docs/architecture.md)
+- [Protocol](docs/protocol.md)
+- [Security model](docs/security.md)
+- [Clean-machine acceptance](docs/clean-machine-acceptance.md)
+- [Contributing a backtest adapter](docs/contributing-adapters.md)
+- [Contribution guide](CONTRIBUTING.md), [security reporting](SECURITY.md), and
+  [changelog](CHANGELOG.md)
+
+English is the default documentation language. Every document links to its complete Simplified
+Chinese counterpart directly below the title.
 
 ## Development
 

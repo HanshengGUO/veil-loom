@@ -1,5 +1,7 @@
 # Clean-machine acceptance
 
+[简体中文](clean-machine-acceptance.zh-CN.md)
+
 Veil Loom has one release-facing acceptance path for its reference workflow. It is intentionally
 separate from unit tests: the runner starts the production build and talks only through public HTTP
 routes.

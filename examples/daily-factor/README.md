@@ -1,5 +1,7 @@
 # Daily factor example
 
+[简体中文](README.zh-CN.md)
+
 This directory is the deterministic reference input for Loom's first backtest adapter:
 
 - [`market.csv`](./market.csv) is a small public daily OHLCV sample;

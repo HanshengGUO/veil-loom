@@ -1,5 +1,7 @@
 # Changelog
 
+[简体中文](CHANGELOG.zh-CN.md)
+
 All notable changes to Veil Loom will be documented here.
 
 The project follows semantic versioning after its first published package. Protocol format versions
@@ -58,3 +60,12 @@ are tracked independently from package versions.
   artifact code, raw pricing payloads, snapshot contents, or private paths to the browser.
 - A dependency-free clean-machine runner for the built Web app and daemon that exercises the full
   reference workflow, restart recovery, and reproduction on Linux, macOS, and Windows CI.
+- A complete Simplified Chinese documentation set with reciprocal language navigation while English
+  remains the canonical default.
+- Bilingual getting-started, research-workflow, core-concepts, and troubleshooting guides grounded
+  in the current developer preview.
+
+### Fixed
+
+- Resolve the committed demo project from the daemon module rather than npm's workspace working
+  directory, so the documented `npm run dev:daemon` path reports real Veil readiness.

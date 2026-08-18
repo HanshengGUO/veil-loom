@@ -1,5 +1,7 @@
 # Security model
 
+[简体中文](security.zh-CN.md)
+
 Veil Loom is local-first, but localhost alone is not an authentication boundary. The Web app and
 daemon bind to `127.0.0.1` and the daemon combines strict Origin checks with a process-scoped session
 credential. Remote binding and user-configured network proxies are unsupported.

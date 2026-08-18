@@ -1,5 +1,7 @@
 # Contributing
 
+[简体中文](CONTRIBUTING.zh-CN.md)
+
 Veil Loom is in pre-alpha development. Small changes that preserve the process and assurance
 boundaries are welcome.
 
@@ -13,7 +15,10 @@ npm run check
 ```
 
 Use `npm run lint:fix` for mechanical formatting. Keep public code, schemas, errors, issues, and pull
-requests in English.
+requests in English. Chinese belongs only in the paired `.zh-CN.md` documentation. When public
+documentation changes, update both language versions in the same pull request and keep commands,
+protocol fields, and security boundaries semantically aligned. The English file remains the
+canonical default.
 
 ## Boundaries
 

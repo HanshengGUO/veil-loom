@@ -1,5 +1,7 @@
 # Contributing a backtest adapter
 
+[简体中文](contributing-adapters.zh-CN.md)
+
 The first adapter boundary is now implemented for one committed daily-factor fixture. It is narrow
 on purpose: framework-specific discovery remains out of scope until this contract has real user
 feedback.

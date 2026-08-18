@@ -1,5 +1,7 @@
 # Security
 
+[简体中文](SECURITY.zh-CN.md)
+
 ## Reporting
 
 Use GitHub's private vulnerability reporting on this repository's **Security** tab. Do not open a
