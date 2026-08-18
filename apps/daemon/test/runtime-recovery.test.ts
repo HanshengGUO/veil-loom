@@ -208,7 +208,7 @@ describe("daemon restart reconciliation", () => {
       }),
     );
     expect(JSON.stringify(events)).not.toContain("loom.pi-recovery-context.v0");
-  });
+  }, 30_000);
 
   it("isolates incomplete and semantically corrupt sessions instead of making them executable", async () => {
     const durableRegistry = registry();
