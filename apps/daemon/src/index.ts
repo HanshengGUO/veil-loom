@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { serve } from "@hono/node-server";
 import { createLoomApp } from "./app.js";
 import { DEMO_PROJECT_ID, seedDemoSession } from "./demo-session.js";
@@ -18,7 +18,7 @@ const projectId = demoSessionEnabled
   ? DEMO_PROJECT_ID
   : resolveConfiguredProjectId(process.env.LOOM_PROJECT_ID);
 const projectRoot = demoSessionEnabled
-  ? join(process.cwd(), "examples", "daily-factor")
+  ? resolve(import.meta.dirname, "../../../examples/daily-factor")
   : process.cwd();
 const projects = new LoomProjectRegistry({ registrations: [{ projectId, root: projectRoot }] });
 const eventStores = new SessionEventStoreRegistry({ stateRoot });
@@ -28,7 +28,7 @@ const runtimeHost = createDefaultRuntimeHost({
   eventStores,
   artifacts,
   selections,
-  cwd: process.cwd(),
+  cwd: projectRoot,
   agentDir: join(stateRoot, "pi"),
   projects,
 });
