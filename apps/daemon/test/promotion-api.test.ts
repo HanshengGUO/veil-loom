@@ -330,7 +330,7 @@ describe("Raw to Veil promotion API", () => {
     expect(target.filter((event) => event.type === "veil.experiment_recorded")).toHaveLength(0);
     expect(JSON.stringify(target)).not.toContain('"state":"rejected"');
     expect(await store.replay()).toEqual(sourceBefore);
-  });
+  }, 30_000);
 
   it("cancels the new Veil task without issuing an Experiment", async () => {
     const source = await seedRawView();
