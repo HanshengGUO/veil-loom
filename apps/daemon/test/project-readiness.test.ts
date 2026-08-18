@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { parse, resolve } from "node:path";
 import { isLoomProjectReadinessResponse, VEIL_PROFILE } from "@veilquant/loom-protocol";
@@ -125,8 +125,16 @@ describe("Veil project readiness", () => {
   });
 
   it("bounds a malformed upstream diagnostic at the daemon boundary", async () => {
-    const projectRoot = await temporaryRoot();
-    const veil = fakeVeilApi(projectRoot);
+    const temporary = await temporaryRoot();
+    const canonicalRoot = resolve(temporary, "canonical-project");
+    const projectRoot = resolve(temporary, "project-alias");
+    await mkdir(canonicalRoot);
+    await symlink(canonicalRoot, projectRoot, process.platform === "win32" ? "junction" : "dir");
+    const veil = fakeVeilApi(
+      projectRoot,
+      undefined,
+      `Invalid declarations at ${projectRoot}/.veil/project.yaml and ${canonicalRoot}/.veil/project.yaml`,
+    );
     const registry = new LoomProjectRegistry({
       registrations: [{ projectId: "diagnostic-project", root: projectRoot }],
       veilApiLoader: async () => veil,
@@ -137,10 +145,12 @@ describe("Veil project readiness", () => {
       status: "invalid",
       issue: {
         code: "UNEXPECTED_ERROR",
-        message: "Invalid declaration at [project]/.veil/project.yaml",
+        message:
+          "Invalid declarations at [project]/.veil/project.yaml and [project]/.veil/project.yaml",
       },
     });
     expect(JSON.stringify(readiness)).not.toContain(projectRoot);
+    expect(JSON.stringify(readiness)).not.toContain(canonicalRoot);
     expect(readiness.issue?.remedy.length).toBe(1_024);
 
     const wrongOwner = fakeVeilApi(projectRoot, {
@@ -170,7 +180,11 @@ function registered(registration: LoomProjectRegistration): LoomProjectRegistry 
   return new LoomProjectRegistry({ registrations: [registration] });
 }
 
-function fakeVeilApi(projectRoot: string, project?: VeilProject): LoadedVeilApi {
+function fakeVeilApi(
+  projectRoot: string,
+  project?: VeilProject,
+  diagnosticMessage = `Invalid declaration at ${projectRoot}/.veil/project.yaml`,
+): LoadedVeilApi {
   return {
     version: "0.1.0",
     api: {
@@ -182,7 +196,7 @@ function fakeVeilApi(projectRoot: string, project?: VeilProject): LoadedVeilApi 
       describeVeilError: () => ({
         ok: false,
         code: "../../private",
-        message: `Invalid declaration at ${projectRoot}/.veil/project.yaml`,
+        message: diagnosticMessage,
         remedy: "x".repeat(2_000),
       }),
       createHypothesisEntry: () => {

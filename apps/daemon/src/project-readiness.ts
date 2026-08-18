@@ -159,6 +159,7 @@ export class LoomProjectRegistry {
         context: Object.freeze({ root, project, veil }),
       };
     } catch (error) {
+      const configuredRoot = this.#roots.get(projectId) ?? this.#fallbackRoot;
       return {
         readiness: {
           format: "loom.project-readiness.v0",
@@ -167,7 +168,11 @@ export class LoomProjectRegistry {
           status: "invalid",
           runtime: runtimeSummary(veil),
           capabilities: [],
-          issue: publicVeilIssue(veil, error, root),
+          issue: publicVeilIssue(
+            veil,
+            error,
+            configuredRoot === undefined ? [root] : [root, resolve(configuredRoot)],
+          ),
         },
       };
     }
@@ -272,7 +277,7 @@ function summarizeProject(project: VeilProject, root: string): LoomVeilProjectSu
 function publicVeilIssue(
   veil: LoadedVeilApi,
   error: unknown,
-  root: string,
+  roots: readonly string[],
 ): LoomProjectReadinessIssue {
   try {
     const diagnostic: unknown = veil.api.describeVeilError(error);
@@ -290,11 +295,16 @@ function publicVeilIssue(
     }
     return {
       code: publicCode(diagnostic.code),
-      message: boundedPublic(diagnostic.message, 512, root, "Veil could not validate the project."),
+      message: boundedPublic(
+        diagnostic.message,
+        512,
+        roots,
+        "Veil could not validate the project.",
+      ),
       remedy: boundedPublic(
         diagnostic.remedy,
         1_024,
-        root,
+        roots,
         "Correct the project declaration and retry.",
       ),
     };
@@ -314,15 +324,17 @@ function assertProjectId(input: string): void {
 function boundedPublic(
   input: string,
   maximum: number,
-  projectRoot: string,
+  projectRoots: readonly string[],
   fallback: string,
 ): string {
   let redacted = input;
-  for (const path of new Set([
-    projectRoot,
-    projectRoot.replaceAll("\\", "/"),
-    projectRoot.replaceAll("/", "\\"),
-  ])) {
+  const paths = new Set<string>();
+  for (const projectRoot of projectRoots) {
+    paths.add(projectRoot);
+    paths.add(projectRoot.replaceAll("\\", "/"));
+    paths.add(projectRoot.replaceAll("/", "\\"));
+  }
+  for (const path of paths) {
     redacted = redacted.split(path).join("[project]");
   }
   const value = redacted.trim() || fallback;
