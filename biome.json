@@ -16,6 +16,7 @@
     "includes": [
       "**/*.ts",
       "**/*.tsx",
+      "**/*.mjs",
       "**/*.json",
       "**/*.css",
       "!**/node_modules",

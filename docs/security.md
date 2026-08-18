@@ -91,6 +91,14 @@ after every returned identity validates; errors, cancellation, retention deletio
 not produce a match. Reproduction confirms parity and has no authority to change the Experiment's
 original verdict.
 
+The clean-machine acceptance runner starts production services with an explicit environment
+allowlist. It carries only the operating-system variables needed to launch Node plus loopback,
+project, and temporary-state configuration; provider keys and unrelated CI secrets are not passed
+to the daemon or Web process. It operates on a copied public fixture, checks the copy's committed
+input hashes after the run, and removes the isolated project and state in a `finally` path. This is
+an acceptance boundary for the reference workflow, not an OS sandbox or a claim that arbitrary user
+tools are isolated.
+
 Pi's event stream is an internal input, not a public passthrough. Loom publishes visible assistant
 text and coarse lifecycle facts, but drops thinking blocks, tool arguments, tool result bodies, and
 provider error messages. The committed CI/development provider is Pi's in-memory faux provider with

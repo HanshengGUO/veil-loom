@@ -56,3 +56,5 @@ are tracked independently from package versions.
   fail-closed matched-identity event that never changes the original verdict.
 - An Experiment evidence drawer and refresh recovery for completed attempts, without exposing
   artifact code, raw pricing payloads, snapshot contents, or private paths to the browser.
+- A dependency-free clean-machine runner for the built Web app and daemon that exercises the full
+  reference workflow, restart recovery, and reproduction on Linux, macOS, and Windows CI.

@@ -66,6 +66,20 @@ npm install
 npm run check
 ```
 
+Run the built-product acceptance before a release or platform-sensitive change:
+
+```bash
+npm run accept:clean-machine
+```
+
+It builds the repository, starts the production Web app and daemon on free loopback ports, copies
+the daily-factor fixture into a temporary project, and exercises chart import, selection, Veil
+promotion, daemon restart, evidence review, and exact reproduction. The runner uses Pi's offline
+faux provider, passes no provider credentials to child services, and removes its temporary project
+and state. CI runs the same built-product path on Linux, macOS, and Windows with Node 24; Linux also
+keeps the minimum Node 22 full-check lane. See
+[Clean-machine acceptance](docs/clean-machine-acceptance.md) for the frozen contract.
+
 Run the two development processes in separate terminals:
 
 ```bash

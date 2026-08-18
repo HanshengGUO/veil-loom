@@ -219,6 +219,26 @@ and a 35-session, four-entity point-in-time panel; it never treats the Raw chart
 `npm run dev:web` authenticates directly to the loopback daemon and renders the real fixture series.
 Production builds do not enable the demo stream.
 
+## Clean-machine acceptance
+
+The release-facing acceptance runner is a dependency-free Node program, not a second test-only
+runtime. It starts the built Next.js server and built daemon on free loopback ports, copies the
+committed daily-factor example into an isolated temporary project, and drives the public HTTP
+protocol. The path covers Raw view publication, all four chart resources, a daemon-derived chart
+selection, selection-grounded Pi work, an independent Veil promotion, daemon restart and session
+reconciliation, Experiment history/evidence, and exact reproduction.
+
+The daemon child receives a small operating-system environment allowlist plus explicit Loom
+configuration. Provider credentials and unrelated CI environment values are not inherited. The
+runner checks that promotion leaves the Raw event log unchanged, restart preserves the existing
+event prefix, reproduction leaves the verdict unchanged, public evidence contains no private path
+or archive payload, and committed fixture inputs retain their hashes. Its temporary project and
+state are removed even when a check fails.
+
+CI runs this built-product path after the ordinary full check on Node 24 for Linux, macOS, and
+Windows. The Linux Node 22 lane continues to verify the declared minimum runtime without repeating
+the longer vertical acceptance.
+
 ## Dependency direction
 
 `apps/web` depends only on the protocol package. `apps/daemon` depends on the protocol and may depend
